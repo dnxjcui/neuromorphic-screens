@@ -269,14 +269,16 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
     // Generate events only for pixels that actually changed significantly
     
     uint32_t eventCount = 0;
-    const uint32_t maxEventsPerFrame = 1000; // Prevent event explosion
-    
-    // Sample pixels with stride to reduce processing (every 4th pixel)
-    const uint32_t stride = 4;
+    const uint32_t maxEventsPerFrame = 100000; // Prevent event explosion
+    const float sensitiveThreshold = 30.0f; // Lower threshold for better sensitivity
+    // const uint32_t maxEventsPerFrame = std::numeric_limits<uint32_t>::infinity();
+
+    // Sample pixels with smaller stride for better coverage (every 2nd pixel)
+    const uint32_t stride = 2;
     
     for (uint32_t y = 0; y < m_height; y += stride) {
         for (uint32_t x = 0; x < m_width; x += stride) {
-            int8_t pixelChange = CalculatePixelDifference(x, y);
+            int8_t pixelChange = CalculatePixelDifference(x, y, sensitiveThreshold);
             
             if (pixelChange != 0 && eventCount < maxEventsPerFrame) {
                 // Generate unique timestamp for each event
@@ -286,6 +288,8 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
                 Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
                 events.events.push_back(event);
                 eventCount++;
+                x += stride * 2; // avoid neighboring pixels
+                // y += stride * 2;
             }
         }
     }
@@ -301,7 +305,7 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
     }
 }
 
-int8_t ScreenCapture::CalculatePixelDifference(uint32_t x, uint32_t y) {
+int8_t ScreenCapture::CalculatePixelDifference(uint32_t x, uint32_t y, const float & sensitiveThreshold) {
     uint32_t pixelIndex = (y * m_width + x) * 4; // RGBA = 4 bytes per pixel
     
     // Bounds checking
@@ -328,9 +332,6 @@ int8_t ScreenCapture::CalculatePixelDifference(uint32_t x, uint32_t y) {
     // Calculate difference
     float difference = currentLuminance - previousLuminance;
     float absDifference = abs(difference);
-    
-    // Use a more sensitive threshold for mouse movement detection
-    const float sensitiveThreshold = 15.0f; // Lower threshold for better sensitivity
     
     // Check if difference exceeds threshold
     if (absDifference > sensitiveThreshold) {

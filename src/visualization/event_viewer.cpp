@@ -61,6 +61,9 @@ bool EventViewer::LoadEvents(const std::string& filename) {
     std::cout << "Auto-starting playback..." << std::endl;
     StartReplay();
     
+    // Add timer for continuous UI updates
+    Fl::add_timeout(1.0/60.0, TimerCallback, this);
+    
     return true;
 }
 
@@ -246,14 +249,17 @@ void EventViewer::ReplayThread() {
         // Update UI from thread - force redraw
         if (m_canvas) {
             m_canvas->redraw();
-            Fl::awake();  // Wake up main thread for UI update
         }
         
         // Update progress slider
         if (m_progressSlider && !m_events.events.empty()) {
             float progress = static_cast<float>(m_currentEventIndex) / static_cast<float>(m_events.events.size());
             m_progressSlider->value(progress);
+            m_progressSlider->redraw();
         }
+        
+        // Wake up main thread for UI update
+        Fl::awake();
         
         // Wait for next frame
         limiter.WaitForNextFrame();
@@ -398,6 +404,20 @@ void EventViewer::OnDownsampleSlider(Fl_Widget* widget, void* data) {
     Fl_Slider* slider = static_cast<Fl_Slider*>(widget);
     int factor = static_cast<int>(slider->value());
     viewer->SetDownsampleFactor(factor);
+}
+
+void EventViewer::TimerCallback(void* data) {
+    EventViewer* viewer = static_cast<EventViewer*>(data);
+    
+    // Force canvas redraw if playing
+    if (viewer->m_isReplaying && !viewer->m_isPaused) {
+        if (viewer->m_canvas) {
+            viewer->m_canvas->redraw();
+        }
+    }
+    
+    // Schedule next timer callback
+    Fl::repeat_timeout(1.0/60.0, TimerCallback, data);
 }
 
 // EventCanvas implementation

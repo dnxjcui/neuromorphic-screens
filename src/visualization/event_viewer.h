@@ -127,6 +127,7 @@ private:
     static void OnSpeedSlider(Fl_Widget* widget, void* data);
     static void OnProgressSlider(Fl_Widget* widget, void* data);
     static void OnDownsampleSlider(Fl_Widget* widget, void* data);
+    static void TimerCallback(void* data);
     
     /**
      * Replay thread function
