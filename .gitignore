@@ -73,5 +73,5 @@ conan/
 
 .claude/
 *.md
-!REAMDME.md
+!README.md
 !REPORT.md
