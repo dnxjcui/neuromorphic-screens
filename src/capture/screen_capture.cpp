@@ -1,0 +1,383 @@
+#include "screen_capture.h"
+#include "../core/timing.h"
+#include <iostream>
+#include <algorithm>
+#include <cstring> // For memset
+
+namespace neuromorphic {
+
+ScreenCapture::ScreenCapture() 
+    : m_device(nullptr)
+    , m_context(nullptr)
+    , m_deskDupl(nullptr)
+    , m_previousFrame(nullptr)
+    , m_currentFrame(nullptr)
+    , m_currentFrameBuffer(nullptr)
+    , m_previousFrameBuffer(nullptr)
+    , m_frameBufferSize(0)
+    , m_width(0)
+    , m_height(0)
+    , m_initialized(false)
+    , m_captureActive(false)
+    , m_firstFrame(true)
+    , m_changeThreshold(0.15f)  // 15% threshold - sensitive enough for mouse movement
+    , m_pixelThreshold(38) {    // 38/255 ≈ 15%
+}
+
+ScreenCapture::~ScreenCapture() {
+    StopCapture();
+    CleanupDesktopDuplication();
+    CleanupDirectX();
+}
+
+bool ScreenCapture::Initialize() {
+    // Get screen dimensions
+    m_width = GetSystemMetrics(SM_CXSCREEN);
+    m_height = GetSystemMetrics(SM_CYSCREEN);
+    
+    std::cout << "Screen capture initialized: " << m_width << "x" << m_height << std::endl;
+    
+    // Calculate frame buffer size (RGBA = 4 bytes per pixel)
+    m_frameBufferSize = m_width * m_height * 4;
+    
+    // Allocate frame buffers
+    m_currentFrameBuffer = new uint8_t[m_frameBufferSize];
+    m_previousFrameBuffer = new uint8_t[m_frameBufferSize];
+    
+    if (!m_currentFrameBuffer || !m_previousFrameBuffer) {
+        std::cerr << "Failed to allocate frame buffers" << std::endl;
+        return false;
+    }
+    
+    // Initialize DirectX
+    if (!InitializeDirectX()) {
+        return false;
+    }
+    
+    // Initialize Desktop Duplication
+    if (!InitializeDesktopDuplication()) {
+        return false;
+    }
+    
+    m_initialized = true;
+    return true;
+}
+
+bool ScreenCapture::StartCapture() {
+    if (!m_initialized) {
+        return false;
+    }
+    
+    m_captureActive = true;
+    m_firstFrame = true;
+    
+    // Initialize previous frame buffer with zeros
+    memset(m_previousFrameBuffer, 0, m_frameBufferSize);
+    
+    std::cout << "Starting screen capture for " << m_width << "x" << m_height << " pixels" << std::endl;
+    std::cout << "Move your mouse or open/close windows to generate events" << std::endl;
+    std::cout << "Capture sensitivity threshold: 15.0 (lower = more sensitive)" << std::endl;
+    
+    return true;
+}
+
+void ScreenCapture::StopCapture() {
+    m_captureActive = false;
+    std::cout << "Screen capture stopped" << std::endl;
+}
+
+bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp) {
+    if (!m_captureActive || !m_initialized) {
+        return false;
+    }
+    
+    // Capture frame using Desktop Duplication
+    if (!CaptureFrameDesktopDuplication()) {
+        return false;
+    }
+    
+    // Generate events from pixel differences
+    GenerateEventsFromFrame(events, timestamp);
+    
+    return true;
+}
+
+bool ScreenCapture::InitializeDirectX() {
+    D3D_FEATURE_LEVEL featureLevels[] = {
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0
+    };
+    D3D_FEATURE_LEVEL featureLevel;
+    
+    HRESULT hr = D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+        featureLevels, ARRAYSIZE(featureLevels), D3D11_SDK_VERSION,
+        &m_device, &featureLevel, &m_context
+    );
+    
+    if (FAILED(hr)) {
+        std::cerr << "Failed to create D3D11 device" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+bool ScreenCapture::InitializeDesktopDuplication() {
+    // Get DXGI adapter and output
+    IDXGIDevice* dxgiDevice = nullptr;
+    HRESULT hr = m_device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice));
+    if (FAILED(hr)) {
+        std::cerr << "Failed to get DXGI device" << std::endl;
+        return false;
+    }
+    
+    IDXGIAdapter* dxgiAdapter = nullptr;
+    hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
+    dxgiDevice->Release();
+    if (FAILED(hr)) {
+        std::cerr << "Failed to get DXGI adapter" << std::endl;
+        return false;
+    }
+    
+    IDXGIOutput* dxgiOutput = nullptr;
+    hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
+    dxgiAdapter->Release();
+    if (FAILED(hr)) {
+        std::cerr << "Failed to get DXGI output" << std::endl;
+        return false;
+    }
+    
+    IDXGIOutput1* dxgiOutput1 = nullptr;
+    hr = dxgiOutput->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(&dxgiOutput1));
+    dxgiOutput->Release();
+    if (FAILED(hr)) {
+        std::cerr << "Failed to get DXGI output 1" << std::endl;
+        return false;
+    }
+    
+    // Create desktop duplication
+    hr = dxgiOutput1->DuplicateOutput(m_device, &m_deskDupl);
+    dxgiOutput1->Release();
+    if (FAILED(hr)) {
+        std::cerr << "Failed to create desktop duplication" << std::endl;
+        return false;
+    }
+    
+    // Create textures for frame capture
+    D3D11_TEXTURE2D_DESC textureDesc = {};
+    textureDesc.Width = m_width;
+    textureDesc.Height = m_height;
+    textureDesc.MipLevels = 1;
+    textureDesc.ArraySize = 1;
+    textureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    textureDesc.SampleDesc.Count = 1;
+    textureDesc.SampleDesc.Quality = 0;
+    textureDesc.Usage = D3D11_USAGE_STAGING;
+    textureDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    
+    hr = m_device->CreateTexture2D(&textureDesc, nullptr, &m_previousFrame);
+    if (FAILED(hr)) {
+        std::cerr << "Failed to create previous frame texture" << std::endl;
+        return false;
+    }
+    
+    hr = m_device->CreateTexture2D(&textureDesc, nullptr, &m_currentFrame);
+    if (FAILED(hr)) {
+        std::cerr << "Failed to create current frame texture" << std::endl;
+        return false;
+    }
+    
+    return true;
+}
+
+bool ScreenCapture::CaptureFrameDesktopDuplication() {
+    IDXGIResource* desktopResource = nullptr;
+    DXGI_OUTDUPL_FRAME_INFO frameInfo;
+    
+    HRESULT hr = m_deskDupl->AcquireNextFrame(constants::FRAME_TIMEOUT_MS, &frameInfo, &desktopResource);
+    if (FAILED(hr)) {
+        if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
+            // No new frame available, this is normal
+            return false;
+        } else if (hr == DXGI_ERROR_ACCESS_LOST) {
+            std::cerr << "Desktop duplication access lost - reinitializing..." << std::endl;
+            CleanupDesktopDuplication();
+            if (!InitializeDesktopDuplication()) {
+                std::cerr << "Failed to reinitialize desktop duplication" << std::endl;
+            }
+            return false;
+        } else {
+            std::cerr << "Desktop duplication frame acquisition failed with HRESULT: 0x" 
+                      << std::hex << hr << std::dec << std::endl;
+        }
+        return false;
+    }
+    
+    // Get the desktop texture
+    ID3D11Texture2D* desktopTexture = nullptr;
+    hr = desktopResource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&desktopTexture));
+    desktopResource->Release();
+    if (FAILED(hr)) {
+        return false;
+    }
+    
+    // Copy to staging texture for CPU access
+    m_context->CopyResource(m_currentFrame, desktopTexture);
+    desktopTexture->Release();
+    
+    // Map the texture to get pixel data
+    D3D11_MAPPED_SUBRESOURCE mappedResource;
+    hr = m_context->Map(m_currentFrame, 0, D3D11_MAP_READ, 0, &mappedResource);
+    if (FAILED(hr)) {
+        return false;
+    }
+    
+    // Copy pixel data to current frame buffer
+    uint8_t* srcData = static_cast<uint8_t*>(mappedResource.pData);
+    for (uint32_t y = 0; y < m_height; y++) {
+        memcpy(m_currentFrameBuffer + y * m_width * 4, 
+               srcData + y * mappedResource.RowPitch, 
+               m_width * 4);
+    }
+    
+    m_context->Unmap(m_currentFrame, 0);
+    m_deskDupl->ReleaseFrame();
+    
+    return true;
+}
+
+void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timestamp) {
+    // Skip first frame (no previous frame to compare against)
+    if (m_firstFrame) {
+        // Copy current frame to previous frame buffer for next comparison
+        memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
+        m_firstFrame = false;
+        return;
+    }
+    
+    // Compare pixels between current and previous frames
+    ComparePixels(events, timestamp);
+    
+    // Copy current frame to previous frame buffer for next comparison
+    memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
+}
+
+void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
+    // Use pixel-by-pixel comparison for accurate DVS-style event generation
+    // Generate events only for pixels that actually changed significantly
+    
+    uint32_t eventCount = 0;
+    const uint32_t maxEventsPerFrame = 1000; // Prevent event explosion
+    
+    // Sample pixels with stride to reduce processing (every 4th pixel)
+    const uint32_t stride = 4;
+    
+    for (uint32_t y = 0; y < m_height; y += stride) {
+        for (uint32_t x = 0; x < m_width; x += stride) {
+            int8_t pixelChange = CalculatePixelDifference(x, y);
+            
+            if (pixelChange != 0 && eventCount < maxEventsPerFrame) {
+                // Generate unique timestamp for each event
+                uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
+                uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
+                
+                Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
+                events.events.push_back(event);
+                eventCount++;
+            }
+        }
+    }
+    
+    // Add small delay to ensure timestamp uniqueness if many events generated
+    if (eventCount > 10) {
+        HighResTimer::SleepMicroseconds(1);
+    }
+    
+    // Debug output for understanding event generation
+    if (eventCount > 0) {
+        std::cout << "\n  Generated " << eventCount << " events in frame";
+    }
+}
+
+int8_t ScreenCapture::CalculatePixelDifference(uint32_t x, uint32_t y) {
+    uint32_t pixelIndex = (y * m_width + x) * 4; // RGBA = 4 bytes per pixel
+    
+    // Bounds checking
+    if (pixelIndex + 3 >= m_frameBufferSize) {
+        return 0;
+    }
+    
+    // Get current and previous pixel values (using luminance for comparison)
+    uint8_t* currentPixel = m_currentFrameBuffer + pixelIndex;
+    uint8_t* previousPixel = m_previousFrameBuffer + pixelIndex;
+    
+    // Calculate luminance (Y = 0.299R + 0.587G + 0.114B)
+    // Note: BGRA format, so indices are [B, G, R, A]
+    float currentLuminance = 
+        currentPixel[2] * 0.299f +  // R
+        currentPixel[1] * 0.587f +  // G
+        currentPixel[0] * 0.114f;   // B
+    
+    float previousLuminance = 
+        previousPixel[2] * 0.299f +  // R
+        previousPixel[1] * 0.587f +  // G
+        previousPixel[0] * 0.114f;   // B
+    
+    // Calculate difference
+    float difference = currentLuminance - previousLuminance;
+    float absDifference = abs(difference);
+    
+    // Use a more sensitive threshold for mouse movement detection
+    const float sensitiveThreshold = 15.0f; // Lower threshold for better sensitivity
+    
+    // Check if difference exceeds threshold
+    if (absDifference > sensitiveThreshold) {
+        // Determine polarity based on luminance change
+        return (difference > 0) ? 1 : -1;
+    }
+    
+    return 0; // No significant change
+}
+
+void ScreenCapture::CleanupDirectX() {
+    if (m_context) {
+        m_context->Release();
+        m_context = nullptr;
+    }
+    
+    if (m_device) {
+        m_device->Release();
+        m_device = nullptr;
+    }
+}
+
+void ScreenCapture::CleanupDesktopDuplication() {
+    if (m_currentFrame) {
+        m_currentFrame->Release();
+        m_currentFrame = nullptr;
+    }
+    
+    if (m_previousFrame) {
+        m_previousFrame->Release();
+        m_previousFrame = nullptr;
+    }
+    
+    if (m_deskDupl) {
+        m_deskDupl->Release();
+        m_deskDupl = nullptr;
+    }
+    
+    if (m_currentFrameBuffer) {
+        delete[] m_currentFrameBuffer;
+        m_currentFrameBuffer = nullptr;
+    }
+    
+    if (m_previousFrameBuffer) {
+        delete[] m_previousFrameBuffer;
+        m_previousFrameBuffer = nullptr;
+    }
+}
+
+} // namespace neuromorphic 
