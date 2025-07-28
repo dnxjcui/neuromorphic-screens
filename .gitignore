@@ -70,3 +70,8 @@ docs/latex/
 # Package managers
 vcpkg/
 conan/
+
+.claude/
+*.md
+!REAMDME.md
+!REPORT.md
