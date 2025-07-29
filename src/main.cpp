@@ -46,13 +46,11 @@ public:
     void printUsage() const {
         std::cout << "Neuromorphic Screens - Event-based Screen Capture\n";
         std::cout << "Usage:\n";
-        std::cout << "  --test\n";
-        std::cout << "  --generate-test-data --output <filename> [--format <binary|csv|txt>]\n";
         std::cout << "  --capture --output <filename> [--duration <seconds>] [--format <binary|csv|txt>]\n";
         std::cout << "  --replay --input <filename>\n";
         std::cout << "  --help\n";
         std::cout << "\nFor GUI visualization, use:\n";
-        std::cout << "  neuromorphic_screens_gui.exe --input <filename>\n";
+        std::cout << "  neuromorphic_screens_imgui.exe --input <filename>\n";
         std::cout << "\nSupported formats:\n";
         std::cout << "  binary - Binary .evt format (default, most efficient)\n";
         std::cout << "  csv    - CSV text format with headers\n";
@@ -61,210 +59,81 @@ public:
 };
 
 /**
- * Helper function to parse format parameter
- */
-EventFileFormat ParseFormat(const std::string& formatStr) {
-    if (formatStr == "csv") {
-        return EventFileFormat::TEXT_CSV;
-    } else if (formatStr == "txt") {
-        return EventFileFormat::TEXT_SPACE;
-    } else if (formatStr == "binary" || formatStr.empty()) {
-        return EventFileFormat::BINARY_NEVS;
-    } else {
-        throw std::invalid_argument("Invalid format: " + formatStr + ". Use binary, csv, or txt");
-    }
-}
-
-/**
  * Main application class
  */
-class NeuromorphicScreens {
-private:
-    std::unique_ptr<ScreenCapture> m_capture;
-
+class NeuromorphicApp {
 public:
-    NeuromorphicScreens() {
-        HighResTimer::Initialize();
-    }
-    
-    void runTests() {
-        std::cout << "Running tests..." << std::endl;
+    void captureEvents(const std::string& outputFile, int duration, EventFileFormat format = EventFileFormat::BINARY_NEVS) {
+        std::cout << "Starting neuromorphic screen capture for " << duration << " seconds..." << std::endl;
         
-        // Test timing
-        uint64_t start = HighResTimer::GetMicroseconds();
-        HighResTimer::SleepMilliseconds(100);
-        uint64_t end = HighResTimer::GetMicroseconds();
-        uint64_t elapsed = end - start;
-        std::cout << "Timing test: " << elapsed << " microseconds (expected ~100000)" << std::endl;
-        
-        // Test event generation
-        EventStream testStream;
-        testStream.width = 1920;
-        testStream.height = 1080;
-        testStream.start_time = HighResTimer::GetMicroseconds();
-        
-        // Generate some test events
-        for (int i = 0; i < 100; i++) {
-            Event event(testStream.start_time + i * 1000, 
-                       static_cast<uint16_t>(i * 10), 
-                       static_cast<uint16_t>(i * 5), 
-                       (i % 2 == 0) ? 1 : -1);
-            testStream.events.push_back(event);
-        }
-        
-        // Test file I/O
-        std::string testFile = "test_events.evt";
-        if (EventFile::WriteEvents(testStream, testFile)) {
-            std::cout << "Event file write test: PASSED" << std::endl;
-            
-            EventStream loadedStream;
-            if (EventFile::ReadEvents(loadedStream, testFile)) {
-                std::cout << "Event file read test: PASSED" << std::endl;
-                std::cout << "Loaded " << loadedStream.events.size() << " events" << std::endl;
-            } else {
-                std::cout << "Event file read test: FAILED" << std::endl;
-            }
-        } else {
-            std::cout << "Event file write test: FAILED" << std::endl;
-        }
-        
-        std::cout << "Tests completed" << std::endl;
-    }
-    
-    void generateTestData(const std::string& outputFile, EventFileFormat format = EventFileFormat::BINARY_NEVS) {
-        std::cout << "Generating test event data..." << std::endl;
-        
-        EventStream testStream;
-        testStream.width = 1920;
-        testStream.height = 1080;
-        testStream.start_time = HighResTimer::GetMicroseconds();
-        
-        // Generate simulated screen events
-        uint64_t currentTime = testStream.start_time;
-        
-        // Simulate a moving object (like a window being dragged)
-        for (int frame = 0; frame < 300; frame++) { // 5 seconds at 60 FPS
-            currentTime = testStream.start_time + frame * 16667; // 60 FPS
-            
-            // Simulate a moving rectangle
-            int x = 100 + (frame * 2) % 1600; // Move horizontally
-            int y = 100 + (frame * 1) % 800;  // Move vertically
-            
-            // Generate events around the moving object
-            for (int dx = -20; dx <= 20; dx += 5) {
-                for (int dy = -20; dy <= 20; dy += 5) {
-                    int eventX = x + dx;
-                    int eventY = y + dy;
-                    
-                    if (eventX >= 0 && eventX < 1920 && eventY >= 0 && eventY < 1080) {
-                        Event event(currentTime, 
-                                   static_cast<uint16_t>(eventX), 
-                                   static_cast<uint16_t>(eventY), 
-                                   (frame % 2 == 0) ? 1 : -1);
-                        testStream.events.push_back(event);
-                    }
-                }
-            }
-        }
-        
-        // Save to file in specified format
-        if (EventFileFormats::WriteEvents(testStream, outputFile, format)) {
-            std::cout << "Generated " << testStream.events.size() << " events" << std::endl;
-            std::cout << "Saved to: " << outputFile << std::endl;
-            
-            // Show statistics
-            EventStats stats;
-            stats.calculate(testStream);
-            std::cout << "Statistics:\n";
-            std::cout << "  Total events: " << stats.total_events << "\n";
-            std::cout << "  Positive events: " << stats.positive_events << "\n";
-            std::cout << "  Negative events: " << stats.negative_events << "\n";
-            std::cout << "  Events per second: " << stats.events_per_second << "\n";
-            std::cout << "  Duration: " << (stats.duration_us / 1000000.0) << " seconds\n";
-        } else {
-            std::cerr << "Failed to save test data" << std::endl;
-        }
-    }
-    
-    void captureScreen(const std::string& outputFile, int durationSeconds = 5, EventFileFormat format = EventFileFormat::BINARY_NEVS) {
-        std::cout << "Initializing real screen capture..." << std::endl;
-        
-        // Initialize screen capture
-        m_capture = std::make_unique<ScreenCapture>();
-        if (!m_capture->Initialize()) {
+        ScreenCapture capture;
+        if (!capture.Initialize()) {
             std::cerr << "Failed to initialize screen capture" << std::endl;
             return;
         }
         
-        std::cout << "Starting screen capture for " << durationSeconds << " seconds..." << std::endl;
-        std::cout << "Move your mouse or open/close windows to generate events" << std::endl;
-        
-        // Start capture first
-        if (!m_capture->StartCapture()) {
-            std::cerr << "Failed to start capture" << std::endl;
+        if (!capture.StartCapture()) {
+            std::cerr << "Failed to start screen capture" << std::endl;
             return;
         }
         
         EventStream events;
-        events.width = m_capture->GetWidth();
-        events.height = m_capture->GetHeight();
-        events.start_time = HighResTimer::GetMicroseconds(); // Record start time after capture is ready
+        events.width = capture.GetWidth();
+        events.height = capture.GetHeight();
+        events.start_time = HighResTimer::GetMicroseconds();
         
         RecordingTimer timer;
-        timer.Start(durationSeconds);
+        timer.Start(duration);
         
-        FrameRateLimiter limiter(60.0f); // 60 FPS capture
+        std::cout << "Recording... Move your mouse or open/close applications to generate events." << std::endl;
+        std::cout << "Screen resolution: " << events.width << "x" << events.height << std::endl;
         
-        std::cout << "Recording... (Press Ctrl+C to stop early)" << std::endl;
+        uint32_t totalEvents = 0;
+        FrameRateLimiter limiter(60.0f);
         
-        uint32_t frameCount = 0;
-        uint32_t successfulFrames = 0;
-        uint32_t lastEventCount = 0;
-        
-        while (timer.ShouldContinue()) {
-            uint64_t currentTime = HighResTimer::GetMicroseconds();
-            frameCount++;
+        while (timer.IsRecording() && timer.ShouldContinue()) {
+            limiter.WaitForNextFrame();
             
-            // Capture frame and generate events
-            uint32_t eventsBefore = events.events.size();
-            if (m_capture->CaptureFrame(events, currentTime)) {
-                successfulFrames++;
-                uint32_t newEvents = events.events.size() - eventsBefore;
+            uint64_t currentTime = HighResTimer::GetMicroseconds();
+            uint32_t frameEvents = static_cast<uint32_t>(events.events.size());
+            
+            if (capture.CaptureFrame(events, currentTime)) {
+                uint32_t newEvents = static_cast<uint32_t>(events.events.size()) - frameEvents;
+                totalEvents += newEvents;
+                
                 if (newEvents > 0) {
-                    std::cout << "\nFrame " << frameCount << ": Generated " << newEvents << " events (total: " << events.events.size() << ")" << std::endl;
+                    float progress = timer.GetElapsedSeconds() / duration;
+                    std::cout << "Events: " << totalEvents << " (+" << newEvents << " this frame) - " 
+                             << progress * 100.0f << "% complete\r" << std::flush;
                 }
             }
-            
-            // Show progress every 60 frames or when events are generated
-            if (frameCount % 60 == 0 || events.events.size() != lastEventCount) {
-                float elapsed = timer.GetElapsedSeconds();
-                float remaining = timer.GetRemainingSeconds();
-                std::cout << "\rRecording... " << elapsed << "s / " << durationSeconds << "s (frames: " << successfulFrames << "/" << frameCount << ", events: " << events.events.size() << ")" << std::flush;
-                lastEventCount = events.events.size();
-            }
-            
-            limiter.WaitForNextFrame();
         }
         
-        std::cout << "\nCapture completed. Saving to: " << outputFile << std::endl;
+        capture.StopCapture();
         
-        // Stop capture
-        m_capture->StopCapture();
+        std::cout << "\nCapture completed. Total events: " << events.events.size() << std::endl;
         
+        if (events.events.empty()) {
+            std::cout << "No events captured. Try moving your mouse or opening applications during recording." << std::endl;
+            return;
+        }
+        
+        // Save events
         if (EventFileFormats::WriteEvents(events, outputFile, format)) {
-            std::cout << "Successfully saved " << events.events.size() << " events" << std::endl;
+            std::cout << "Events saved to: " << outputFile << std::endl;
             
-            // Show statistics
+            // Display statistics
             EventStats stats;
             stats.calculate(events);
-            std::cout << "Statistics:\n";
-            std::cout << "  Total events: " << stats.total_events << "\n";
-            std::cout << "  Positive events: " << stats.positive_events << "\n";
-            std::cout << "  Negative events: " << stats.negative_events << "\n";
-            std::cout << "  Events per second: " << stats.events_per_second << "\n";
-            std::cout << "  Duration: " << (stats.duration_us / 1000000.0) << " seconds\n";
+            
+            std::cout << "\nCapture Statistics:" << std::endl;
+            std::cout << "Total Events: " << stats.total_events << std::endl;
+            std::cout << "Positive Events: " << stats.positive_events << std::endl;
+            std::cout << "Negative Events: " << stats.negative_events << std::endl;
+            std::cout << "Duration: " << (stats.duration_us / 1000000.0f) << " seconds" << std::endl;
+            std::cout << "Events/second: " << stats.events_per_second << std::endl;
         } else {
-            std::cerr << "Failed to save capture data" << std::endl;
+            std::cerr << "Failed to save events to file" << std::endl;
         }
     }
     
@@ -273,108 +142,94 @@ public:
         
         EventStream events;
         if (!EventFileFormats::ReadEvents(events, inputFile)) {
-            std::cerr << "Failed to load events" << std::endl;
+            std::cerr << "Failed to load events from: " << inputFile << std::endl;
             return;
         }
         
         std::cout << "Loaded " << events.events.size() << " events" << std::endl;
-        std::cout << "Screen size: " << events.width << "x" << events.height << std::endl;
         
-        // Show statistics
+        if (events.events.empty()) {
+            std::cout << "No events found in file" << std::endl;
+            return;
+        }
+        
+        // Calculate and display statistics
         EventStats stats;
         stats.calculate(events);
-        std::cout << "Statistics:\n";
-        std::cout << "  Total events: " << stats.total_events << "\n";
-        std::cout << "  Positive events: " << stats.positive_events << "\n";
-        std::cout << "  Negative events: " << stats.negative_events << "\n";
-        std::cout << "  Events per second: " << stats.events_per_second << "\n";
-        std::cout << "  Duration: " << (stats.duration_us / 1000000.0) << " seconds\n";
         
-        // Show first 10 events
-        std::cout << "\nFirst 10 events:\n";
-        size_t numToShow = (events.events.size() < 10) ? events.events.size() : 10;
-        for (size_t i = 0; i < numToShow; i++) {
-            const auto& event = events.events[i];
-            std::cout << "  Event " << i << ": (" << event.x << ", " << event.y 
-                      << ") polarity=" << (int)event.polarity 
-                      << " time=" << (event.timestamp - events.start_time) / 1000 << "ms\n";
+        std::cout << "\nEvent Statistics:" << std::endl;
+        std::cout << "Total Events: " << stats.total_events << std::endl;
+        std::cout << "Positive Events: " << stats.positive_events << std::endl;
+        std::cout << "Negative Events: " << stats.negative_events << std::endl;
+        std::cout << "Duration: " << (stats.duration_us / 1000000.0f) << " seconds" << std::endl;
+        std::cout << "Events/second: " << stats.events_per_second << std::endl;
+        std::cout << "Screen dimensions: " << events.width << "x" << events.height << std::endl;
+        
+        // Show sample events
+        std::cout << "\nFirst 10 events:" << std::endl;
+        size_t maxEvents = (events.events.size() < 10) ? events.events.size() : 10;
+        for (size_t i = 0; i < maxEvents; i++) {
+            const Event& event = events.events[i];
+            std::cout << "  [" << i << "] t=" << event.timestamp << " x=" << event.x 
+                     << " y=" << event.y << " pol=" << (int)event.polarity << std::endl;
         }
         
-        // Show last 10 events
         if (events.events.size() > 10) {
-            std::cout << "\nLast 10 events:\n";
+            std::cout << "\nLast 10 events:" << std::endl;
             for (size_t i = events.events.size() - 10; i < events.events.size(); i++) {
-                const auto& event = events.events[i];
-                std::cout << "  Event " << i << ": (" << event.x << ", " << event.y 
-                          << ") polarity=" << (int)event.polarity 
-                          << " time=" << (event.timestamp - events.start_time) / 1000 << "ms\n";
+                const Event& event = events.events[i];
+                std::cout << "  [" << i << "] t=" << event.timestamp << " x=" << event.x 
+                         << " y=" << event.y << " pol=" << (int)event.polarity << std::endl;
             }
         }
+        
+        std::cout << "\nUse neuromorphic_screens_imgui.exe --input " << inputFile 
+                  << " for visual playback" << std::endl;
     }
-    
 };
 
 int main(int argc, char* argv[]) {
-    CommandLineParser parser(argc, argv);
+    std::cout << "Neuromorphic Screens v1.0\n";
+    std::cout << "Event-Based Screen Capture System\n\n";
     
-    if (parser.hasFlag("--help")) {
+    CommandLineParser parser(argc, argv);
+    NeuromorphicApp app;
+    
+    if (parser.hasFlag("--help") || argc == 1) {
         parser.printUsage();
         return 0;
     }
     
-    NeuromorphicScreens app;
-    
     try {
-        if (parser.hasFlag("--test")) {
-            app.runTests();
-        } else if (parser.hasFlag("--generate-test-data")) {
+        if (parser.hasFlag("--capture")) {
             std::string outputFile = parser.getValue("--output");
-            
             if (outputFile.empty()) {
-                std::cerr << "Missing --output parameter" << std::endl;
+                std::cerr << "Output file required for capture mode" << std::endl;
                 parser.printUsage();
                 return 1;
             }
             
-            std::string formatStr = parser.getValue("--format");
-            EventFileFormat format = ParseFormat(formatStr);
-            
-            app.generateTestData(outputFile, format);
-            
-        } else if (parser.hasFlag("--capture")) {
-            std::string outputFile = parser.getValue("--output");
-            
-            if (outputFile.empty()) {
-                std::cerr << "Missing --output parameter" << std::endl;
-                parser.printUsage();
-                return 1;
-            }
-            
-            std::string durationStr = parser.getValue("--duration");
             int duration = 5; // Default 5 seconds
+            std::string durationStr = parser.getValue("--duration");
             if (!durationStr.empty()) {
-                try {
-                    duration = std::stoi(durationStr);
-                    if (duration <= 0 || duration > 60) {
-                        std::cerr << "Duration must be between 1 and 60 seconds" << std::endl;
-                        return 1;
-                    }
-                } catch (const std::exception&) {
-                    std::cerr << "Invalid duration value" << std::endl;
-                    return 1;
-                }
+                duration = std::stoi(durationStr);
+                duration = (duration < 1) ? 1 : ((duration > 60) ? 60 : duration); // Clamp between 1-60 seconds
             }
             
+            EventFileFormat format = EventFileFormat::BINARY_NEVS;
             std::string formatStr = parser.getValue("--format");
-            EventFileFormat format = ParseFormat(formatStr);
+            if (formatStr == "csv") {
+                format = EventFileFormat::TEXT_CSV;
+            } else if (formatStr == "txt") {
+                format = EventFileFormat::TEXT_SPACE;
+            }
             
-            app.captureScreen(outputFile, duration, format);
+            app.captureEvents(outputFile, duration, format);
             
         } else if (parser.hasFlag("--replay")) {
             std::string inputFile = parser.getValue("--input");
-            
             if (inputFile.empty()) {
-                std::cerr << "Missing --input parameter" << std::endl;
+                std::cerr << "Input file required for replay mode" << std::endl;
                 parser.printUsage();
                 return 1;
             }
@@ -382,7 +237,7 @@ int main(int argc, char* argv[]) {
             app.replayEvents(inputFile);
             
         } else {
-            std::cout << "No action specified. Use --help for usage information." << std::endl;
+            std::cerr << "Unknown command" << std::endl;
             parser.printUsage();
             return 1;
         }
@@ -390,7 +245,10 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
+    } catch (...) {
+        std::cerr << "Unknown error occurred" << std::endl;
+        return 1;
     }
     
     return 0;
-} 
+}

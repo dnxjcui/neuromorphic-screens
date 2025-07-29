@@ -76,3 +76,5 @@ conan/
 *.md
 !README.md
 !REPORT.md
+*.html
+nul

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstring> // For memset
+#include <omp.h>   // For OpenMP parallelization
 
 namespace neuromorphic {
 
@@ -268,40 +269,54 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
     // Use pixel-by-pixel comparison for accurate DVS-style event generation
     // Generate events only for pixels that actually changed significantly
     
-    uint32_t eventCount = 0;
     const uint32_t maxEventsPerFrame = 100000; // Prevent event explosion
-    const float sensitiveThreshold = 30.0f; // Lower threshold for better sensitivity
-    // const uint32_t maxEventsPerFrame = std::numeric_limits<uint32_t>::infinity();
-
-    // Sample pixels with smaller stride for better coverage (every 2nd pixel)
-    const uint32_t stride = 2;
+    const float sensitiveThreshold = 15.0f; // Lower threshold for better sensitivity
+    const uint32_t stride = 10;
     
-    for (uint32_t y = 0; y < m_height; y += stride) {
-        for (uint32_t x = 0; x < m_width; x += stride) {
-            int8_t pixelChange = CalculatePixelDifference(x, y, sensitiveThreshold);
-            
-            if (pixelChange != 0 && eventCount < maxEventsPerFrame) {
-                // Generate unique timestamp for each event
-                uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
-                uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
+    // Thread-local storage for events to avoid synchronization overhead
+    std::vector<Event> localEvents;
+    localEvents.reserve(maxEventsPerFrame / omp_get_max_threads() + 1000);
+    
+    // Parallelize the nested loops using OpenMP
+    #pragma omp parallel
+    {
+        std::vector<Event> threadLocalEvents;
+        threadLocalEvents.reserve(1000);
+        
+        #pragma omp for schedule(dynamic, 16) nowait
+        for (int y = 0; y < static_cast<int>(m_height); y += stride) {
+            for (uint32_t x = 0; x < m_width; x += stride) {
+                int8_t pixelChange = CalculatePixelDifference(x, static_cast<uint32_t>(y), sensitiveThreshold);
                 
-                Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
-                events.events.push_back(event);
-                eventCount++;
-                x += stride * 2; // avoid neighboring pixels
-                // y += stride * 2;
+                if (pixelChange != 0 && threadLocalEvents.size() < maxEventsPerFrame / omp_get_max_threads()) {
+                    // Generate unique timestamp for each event
+                    uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
+                    uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
+                    
+                    Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
+                    threadLocalEvents.push_back(event);
+                    x += stride * 2; // avoid neighboring pixels
+                }
             }
+        }
+        
+        // Merge thread-local events into main events vector (critical section)
+        #pragma omp critical
+        {
+            events.events.insert(events.events.end(), threadLocalEvents.begin(), threadLocalEvents.end());
         }
     }
     
+    uint32_t eventCount = events.events.size();
+    
     // Add small delay to ensure timestamp uniqueness if many events generated
-    if (eventCount > 10) {
-        HighResTimer::SleepMicroseconds(1);
-    }
+    // if (eventCount > 10) {
+    //     HighResTimer::SleepMicroseconds(1);
+    // }
     
     // Debug output for understanding event generation
     if (eventCount > 0) {
-        std::cout << "\n  Generated " << eventCount << " events in frame";
+        std::cout << "\n  Generated " << eventCount << " events in frame (parallelized)";
     }
 }
 
