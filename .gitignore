@@ -79,3 +79,4 @@ conan/
 *.html
 nul
 data/*
+palette.png
