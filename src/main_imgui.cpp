@@ -21,12 +21,6 @@ void show_usage() {
     std::cout << "  Green dots = Positive events (brightness increase)\n";
     std::cout << "  Red dots = Negative events (brightness decrease)\n";
     std::cout << "  Dots fade over time for transient visualization\n\n";
-    std::cout << "Features:\n";
-    std::cout << "  - Stable, segfault-free operation with ImGui + DirectX 11\n";
-    std::cout << "  - Automatic video-like playback when Play is pressed\n";
-    std::cout << "  - Real-time performance with 60 FPS rendering\n";
-    std::cout << "  - Thread-safe event processing and visualization\n";
-    std::cout << "  - Resizable interface with professional layout\n\n";
 }
 
 int main(int argc, char* argv[]) {

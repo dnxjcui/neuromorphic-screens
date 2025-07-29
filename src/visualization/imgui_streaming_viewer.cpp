@@ -183,12 +183,15 @@ void ImGuiStreamingViewer::VisualizationThreadFunction() {
         const EventStream& stream = m_streamingApp.getEventStream();
         
         // Add new events to active dots (simplified - add recent events)
-        if (!stream.events.empty()) {
+        if (stream.size() > 0) {
             uint64_t currentTime = HighResTimer::GetMicroseconds();
             uint64_t recentThreshold = 100000; // 100ms
             
+            // Get thread-safe copy of events for visualization
+            auto eventsCopy = stream.getEventsCopy();
+            
             // Add events from the last 100ms to visualization
-            for (const auto& event : stream.events) {
+            for (const auto& event : eventsCopy) {
                 uint64_t eventAge = currentTime - (stream.start_time + event.timestamp);
                 if (eventAge <= recentThreshold) {
                     AddDot(event);
@@ -250,9 +253,24 @@ void ImGuiStreamingViewer::RemoveExpiredDots() {
 }
 
 void ImGuiStreamingViewer::RenderEventCanvas() {
-    // Canvas for event visualization
+    // Dynamic canvas sizing based on available window space
+    ImVec2 windowSize = ImGui::GetWindowSize();
     ImVec2 canvasPos = ImVec2(50, 50);
-    ImVec2 canvasSize = ImVec2(m_canvasWidth, m_canvasHeight);
+    
+    // Use most of the window space for canvas, leaving room for controls
+    float controlsHeight = m_showStats ? 200 : 100; // Space for stats/controls
+    ImVec2 canvasSize = ImVec2(
+        windowSize.x - 100,  // Leave 50px margin on each side
+        windowSize.y - canvasPos.y - controlsHeight  // Leave space for controls below
+    );
+    
+    // Ensure minimum canvas size
+    if (canvasSize.x < 400.0f) canvasSize.x = 400.0f;
+    if (canvasSize.y < 300.0f) canvasSize.y = 300.0f;
+    
+    // Update canvas dimensions for coordinate mapping
+    m_canvasWidth = static_cast<uint32_t>(canvasSize.x);
+    m_canvasHeight = static_cast<uint32_t>(canvasSize.y);
     
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
@@ -336,7 +354,8 @@ void ImGuiStreamingViewer::RenderStatsPanel() {
     if (ImGui::Begin("Statistics", &m_showStats, ImGuiWindowFlags_NoResize)) {
         const EventStream& stream = m_streamingApp.getEventStream();
         
-        ImGui::Text("Total Events: %zu", stream.events.size());
+        ImGui::Text("Context Window: %zu / %zu", stream.size(), stream.max_events);
+        ImGui::Text("Total Generated: %llu", stream.total_events_generated);
         ImGui::Text("Resolution: %ux%u", stream.width, stream.height);
         
         // Active dots count
@@ -354,7 +373,7 @@ void ImGuiStreamingViewer::RenderStatsPanel() {
             uint64_t currentTime = HighResTimer::GetMicroseconds();
             uint64_t streamingDuration = currentTime - stream.start_time;
             float durationSeconds = static_cast<float>(streamingDuration) / 1000000.0f;
-            float eventsPerSecond = stream.events.size() / (durationSeconds > 1.0f ? durationSeconds : 1.0f);
+            float eventsPerSecond = stream.total_events_generated / (durationSeconds > 1.0f ? durationSeconds : 1.0f);
             
             ImGui::Text("Duration: %.1fs", durationSeconds);
             ImGui::Text("Events/sec: %.0f", eventsPerSecond);

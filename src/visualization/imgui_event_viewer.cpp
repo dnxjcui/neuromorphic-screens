@@ -88,17 +88,17 @@ bool ImGuiEventViewer::LoadEvents(const std::string& filename) {
     }
     
     // Sort events by timestamp
-    std::sort(m_events.events.begin(), m_events.events.end(),
+    std::sort(m_events.begin(), m_events.end(),
               [](const Event& a, const Event& b) { return a.timestamp < b.timestamp; });
     
     // CRITICAL: Normalize timestamps so first event starts at time 0
-    if (!m_events.events.empty()) {
-        uint64_t firstTimestamp = m_events.events[0].timestamp;
-        for (auto& event : m_events.events) {
+    if (m_events.size() > 0) {
+        uint64_t firstTimestamp = m_events.begin()->timestamp;
+        for (auto& event : m_events) {
             event.timestamp -= firstTimestamp;
         }
         m_events.start_time = 0; // Ensure start time is 0 for relative timing
-        std::cout << "Normalized " << m_events.events.size() << " events with first timestamp at 0" << std::endl;
+        std::cout << "Normalized " << m_events.size() << " events with first timestamp at 0" << std::endl;
     }
     
     // Calculate statistics
@@ -301,16 +301,10 @@ void ImGuiEventViewer::ExportToGIF() {
         << "-y \"" << filename.str() << "\"";
     
     std::cout << "Running FFmpeg command for GIF export..." << std::endl;
-    // int result = system(cmd.str().c_str());
     std::thread([command = cmd.str()] {
         std::system(command.c_str());
     }).detach();
     
-    // if (result == 0) {
-    //     std::cout << "GIF export completed successfully: " << filename.str() << std::endl;
-    // } else {
-    //     std::cerr << "GIF export failed. FFmpeg command returned error code: " << result << std::endl;
-    // }
     std::cout << "GIF export completed successfully: " << filename.str() << std::endl;
 }
 

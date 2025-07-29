@@ -81,11 +81,11 @@ bool EventFileFormats::WriteCSV(const EventStream& events, const std::string& fi
     file << "# Generated: " << GetCurrentDateTime() << std::endl;
     file << "# Screen resolution: " << events.width << "x" << events.height << std::endl;
     file << "# Start time: " << events.start_time << " (microseconds)" << std::endl;
-    file << "# Event count: " << events.events.size() << std::endl;
+    file << "# Event count: " << events.size() << std::endl;
     file << "timestamp,x,y,polarity" << std::endl;
     
     // Write events
-    for (const auto& event : events.events) {
+    for (const auto& event : events) {
         file << event.timestamp << "," 
              << event.x << "," 
              << event.y << "," 
@@ -108,10 +108,10 @@ bool EventFileFormats::WriteSpaceSeparated(const EventStream& events, const std:
     file << "# Format: x y polarity timestamp_microseconds" << std::endl;
     file << "# Screen resolution: " << events.width << "x" << events.height << std::endl;
     file << "# Start time: " << events.start_time << " microseconds" << std::endl;
-    file << "# Event count: " << events.events.size() << std::endl;
+    file << "# Event count: " << events.size() << std::endl;
     
     // Write events in rpg_dvs_ros format: x y polarity timestamp
-    for (const auto& event : events.events) {
+    for (const auto& event : events) {
         file << event.x << " " 
              << event.y << " " 
              << static_cast<int>(event.polarity) << " " 
@@ -129,7 +129,7 @@ bool EventFileFormats::ReadCSV(EventStream& events, const std::string& filename)
         return false;
     }
     
-    events.events.clear();
+    events.clear();
     std::string line;
     bool headerParsed = false;
     
@@ -174,7 +174,7 @@ bool EventFileFormats::ReadCSV(EventStream& events, const std::string& filename)
         }
         
         if (field == 4) {
-            events.events.push_back(event);
+            events.push_back(event);
         }
     }
     
@@ -189,7 +189,7 @@ bool EventFileFormats::ReadSpaceSeparated(EventStream& events, const std::string
         return false;
     }
     
-    events.events.clear();
+    events.clear();
     std::string line;
     
     while (std::getline(file, line)) {
@@ -214,7 +214,7 @@ bool EventFileFormats::ReadSpaceSeparated(EventStream& events, const std::string
         
         if (ss >> event.x >> event.y >> polarity_temp >> event.timestamp) {
             event.polarity = static_cast<int8_t>(polarity_temp);
-            events.events.push_back(event);
+            events.push_back(event);
         }
     }
     
@@ -268,12 +268,12 @@ bool EventFileFormats::WriteAEDAT(const EventStream& events, const std::string& 
     header.width = events.width;
     header.height = events.height;
     header.start_time = events.start_time;
-    header.event_count = static_cast<uint32_t>(events.events.size());
+    header.event_count = static_cast<uint32_t>(events.size());
     
     file.write(reinterpret_cast<const char*>(&header), sizeof(header));
     
     // Write events in AEDAT format
-    for (const auto& event : events.events) {
+    for (const auto& event : events) {
         AEDATEvent ae;
         ae.timestamp = static_cast<uint32_t>(event.timestamp);
         ae.x = event.x;
@@ -285,8 +285,8 @@ bool EventFileFormats::WriteAEDAT(const EventStream& events, const std::string& 
     
     file.close();
     std::cout << "AEDAT file written successfully: " << filename << std::endl;
-    std::cout << "Events: " << events.events.size() << ", Size: " << 
-                 (sizeof(AEDATHeader) + events.events.size() * sizeof(AEDATEvent)) << " bytes" << std::endl;
+    std::cout << "Events: " << events.size() << ", Size: " << 
+                 (sizeof(AEDATHeader) + events.size() * sizeof(AEDATEvent)) << " bytes" << std::endl;
     return true;
 }
 
@@ -323,8 +323,8 @@ bool EventFileFormats::ReadAEDAT(EventStream& events, const std::string& filenam
     events.width = header.width;
     events.height = header.height;
     events.start_time = header.start_time;
-    events.events.clear();
-    events.events.reserve(header.event_count);
+    events.clear();
+    events.reserve(header.event_count);
     
     // Read events
     for (uint32_t i = 0; i < header.event_count; i++) {
@@ -347,7 +347,7 @@ bool EventFileFormats::ReadAEDAT(EventStream& events, const std::string& filenam
     
     file.close();
     std::cout << "AEDAT file read successfully: " << filename << std::endl;
-    std::cout << "Events loaded: " << events.events.size() << std::endl;
+    std::cout << "Events loaded: " << events.size() << std::endl;
     return true;
 }
 

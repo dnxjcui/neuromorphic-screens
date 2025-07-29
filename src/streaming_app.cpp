@@ -45,10 +45,11 @@ void StreamingApp::stopStreaming() {
     m_capture.StopCapture();
     
     // Save events if filename specified
-    if (!m_saveFilename.empty() && !m_eventStream.events.empty()) {
+    if (!m_saveFilename.empty() && m_eventStream.size() > 0) {
         if (EventFileFormats::WriteEvents(m_eventStream, m_saveFilename, m_saveFormat)) {
             std::cout << "Events saved to: " << m_saveFilename << std::endl;
-            std::cout << "Total events captured: " << m_eventStream.events.size() << std::endl;
+            std::cout << "Context window events saved: " << m_eventStream.size() << std::endl;
+            std::cout << "Total events generated: " << m_eventStream.total_events_generated << std::endl;
         } else {
             std::cerr << "Failed to save events" << std::endl;
         }

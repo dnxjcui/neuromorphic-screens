@@ -35,6 +35,7 @@ private:
     // Event generation
     float m_changeThreshold;
     uint32_t m_pixelThreshold; // Threshold for pixel change detection
+    
 
 public:
     ScreenCapture();
@@ -61,6 +62,11 @@ public:
     bool CaptureFrame(EventStream& events, uint64_t timestamp);
     
     /**
+     * Capture a frame and generate bit-packed representation (much more efficient)
+     */
+    bool CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t timestamp);
+    
+    /**
      * Get screen dimensions
      */
     uint32_t GetWidth() const { return m_width; }
@@ -83,6 +89,7 @@ public:
      * Get change threshold
      */
     float GetChangeThreshold() const { return m_changeThreshold; }
+    
 
 private:
     /**

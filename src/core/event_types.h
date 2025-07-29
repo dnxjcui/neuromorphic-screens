@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <vector>
+#include <deque>
 #include <string>
+#include <mutex>
 
 namespace neuromorphic {
 
@@ -16,6 +18,7 @@ namespace constants {
     constexpr float REPLAY_FPS = 60.0f;           // 60 FPS target for replay
     constexpr uint64_t FRAME_TIMEOUT_MS = 16;     // 16ms frame timeout
     constexpr uint32_t MAX_EVENTS_PER_FRAME = 10000; // Safety limit for events per frame
+    constexpr size_t MAX_EVENT_CONTEXT_WINDOW = 1000000; // Maximum events in rolling buffer
 }
 
 /**
@@ -24,7 +27,7 @@ namespace constants {
 struct Event {
     uint64_t timestamp;  // Microseconds since epoch
     uint16_t x, y;       // Pixel coordinates
-    int8_t polarity;     // +1 for brightness increase, -1 for decrease
+    int8_t polarity;     // +1 for brightness increase, 0 for decrease
     
     Event() : timestamp(0), x(0), y(0), polarity(0) {}
     Event(uint64_t ts, uint16_t px, uint16_t py, int8_t pol) 
@@ -32,14 +35,106 @@ struct Event {
 };
 
 /**
- * Stream of events with metadata
+ * Stream of events with metadata using fixed-length rolling buffer
  */
 struct EventStream {
-    std::vector<Event> events;
+    std::deque<Event> events;
     uint32_t width, height;  // Screen dimensions
     uint64_t start_time;     // Recording start timestamp
+    size_t max_events;       // Maximum events in rolling buffer
+    uint64_t total_events_generated; // Total events generated (for statistics)
+    mutable std::mutex events_mutex; // Thread safety for event access
     
-    EventStream() : width(0), height(0), start_time(0) {}
+    EventStream() : width(0), height(0), start_time(0), 
+                   max_events(constants::MAX_EVENT_CONTEXT_WINDOW), 
+                   total_events_generated(0) {}
+    
+    EventStream(size_t max_size) : width(0), height(0), start_time(0), 
+                                  max_events(max_size), total_events_generated(0) {}
+    
+    // Thread-safe method to add events with rolling buffer behavior
+    void addEvents(const std::vector<Event>& newEvents) {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        for (const auto& event : newEvents) {
+            if (events.size() >= max_events) {
+                events.pop_front();
+            }
+            events.push_back(event);
+            total_events_generated++;
+        }
+    }
+    
+    // Thread-safe method to add single event
+    void addEvent(const Event& event) {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        if (events.size() >= max_events) {
+            events.pop_front();
+        }
+        events.push_back(event);
+        total_events_generated++;
+    }
+    
+    // Thread-safe access to events for reading
+    std::vector<Event> getEventsCopy() const {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        return std::vector<Event>(events.begin(), events.end());
+    }
+    
+    // Thread-safe size check
+    size_t size() const {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        return events.size();
+    }
+    
+    // File format compatibility methods
+    void clear() {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        events.clear();
+        total_events_generated = 0;
+    }
+    
+    void reserve(size_t capacity) {
+        (void)capacity; // Suppress unused parameter warning
+        // No-op for deque compatibility with vector-style reserve calls
+    }
+    
+    void push_back(const Event& event) {
+        addEvent(event);
+    }
+    
+    void resize(size_t new_size) {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        events.resize(new_size);
+    }
+    
+    Event* data() {
+        // Return pointer to first element for file I/O - WARNING: not thread-safe by design for file operations
+        return events.empty() ? nullptr : &events[0];
+    }
+    
+    const Event* data() const {
+        // Return const pointer to first element for file I/O - WARNING: not thread-safe by design for file operations  
+        return events.empty() ? nullptr : &events[0];
+    }
+    
+    // Iterator access for file formats (not thread-safe by design for performance)
+    auto begin() { return events.begin(); }
+    auto end() { return events.end(); }
+    auto begin() const { return events.begin(); }
+    auto end() const { return events.end(); }
+    
+    // Erase methods for compatibility with vector-style operations
+    template<typename Iterator>
+    auto erase(Iterator first, Iterator last) {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        return events.erase(first, last);
+    }
+    
+    template<typename Iterator>
+    auto erase(Iterator pos) {
+        std::lock_guard<std::mutex> lock(events_mutex);
+        return events.erase(pos);
+    }
 };
 
 /**
@@ -100,5 +195,55 @@ struct AEDATHeader {
     uint32_t event_count; // number of events
 };
 #pragma pack(pop)
+
+/**
+ * Bit-packed event frame for efficient storage and streaming
+ * Each pixel is represented by 1 bit: 1=brightness increase, 0=brightness decrease
+ * Massive memory savings: ~259KB per 1920x1080 frame vs millions of 13-byte events
+ */
+struct BitPackedEventFrame {
+    uint64_t timestamp;           // Frame timestamp
+    uint32_t width, height;       // Frame dimensions
+    std::vector<uint8_t> bitData; // Packed bits (width*height bits packed into bytes)
+    
+    BitPackedEventFrame() : timestamp(0), width(0), height(0) {}
+    BitPackedEventFrame(uint64_t ts, uint32_t w, uint32_t h) 
+        : timestamp(ts), width(w), height(h) {
+        size_t bitCount = w * h;
+        size_t byteCount = (bitCount + 7) / 8; // Round up to nearest byte
+        bitData.resize(byteCount, 0);
+    }
+    
+    // Set pixel bit (1=increase, 0=decrease)
+    void setPixel(uint32_t x, uint32_t y, bool increase) {
+        if (x >= width || y >= height) return;
+        
+        size_t bitIndex = y * width + x;
+        size_t byteIndex = bitIndex / 8;
+        size_t bitOffset = bitIndex % 8;
+        
+        if (increase) {
+            bitData[byteIndex] |= (1 << bitOffset);
+        } else {
+            bitData[byteIndex] &= ~(1 << bitOffset);
+        }
+    }
+    
+    // Get pixel bit
+    bool getPixel(uint32_t x, uint32_t y) const {
+        if (x >= width || y >= height) return false;
+        
+        size_t bitIndex = y * width + x;
+        size_t byteIndex = bitIndex / 8;
+        size_t bitOffset = bitIndex % 8;
+        
+        return (bitData[byteIndex] & (1 << bitOffset)) != 0;
+    }
+    
+    // Get storage size in bytes
+    size_t getStorageSize() const {
+        return sizeof(timestamp) + sizeof(width) + sizeof(height) + bitData.size();
+    }
+};
 
 } // namespace neuromorphic 

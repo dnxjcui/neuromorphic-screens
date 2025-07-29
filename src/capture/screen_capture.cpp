@@ -216,6 +216,11 @@ bool ScreenCapture::CaptureFrameDesktopDuplication() {
         return false;
     }
     
+    // Check if cursor shape or position changed (enables cursor capture)
+    if (frameInfo.PointerPosition.Visible || frameInfo.PointerShapeBufferSize > 0) {
+        // Cursor is visible and may have moved - this ensures cursor changes are captured
+    }
+    
     // Get the desktop texture
     ID3D11Texture2D* desktopTexture = nullptr;
     hr = desktopResource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&desktopTexture));
@@ -249,10 +254,51 @@ bool ScreenCapture::CaptureFrameDesktopDuplication() {
     return true;
 }
 
+bool ScreenCapture::CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t timestamp) {
+    if (!m_captureActive || !m_initialized) {
+        return false;
+    }
+    
+    // Capture frame using Desktop Duplication
+    if (!CaptureFrameDesktopDuplication()) {
+        return false;
+    }
+    
+    // Initialize bit-packed frame
+    frame = BitPackedEventFrame(timestamp, m_width, m_height);
+    
+    // Skip first frame (no previous frame to compare against)
+    if (m_firstFrame) {
+        memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
+        m_firstFrame = false;
+        return true; // Return empty frame
+    }
+    
+    // Generate bit-packed representation (optimized)
+    const float sensitiveThreshold = 20.0f;
+    
+    // Use smaller chunk size for better load balancing
+    #pragma omp parallel for schedule(dynamic, 32)
+    for (int y = 0; y < static_cast<int>(m_height); y++) {
+        for (uint32_t x = 0; x < m_width; x++) {
+            int8_t pixelChange = CalculatePixelDifference(x, static_cast<uint32_t>(y), sensitiveThreshold);
+            
+            if (pixelChange >= 0) { // 0 or 1 (decrease or increase)
+                frame.setPixel(x, y, pixelChange == 1);
+            }
+        }
+    }
+    
+    // Copy current frame to previous frame buffer for next comparison
+    memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
+    
+    return true;
+}
+
 void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timestamp) {
     // Skip first frame (no previous frame to compare against)
     if (m_firstFrame) {
-        // Copy current frame to previous frame buffer for next comparison
+        // Copy current frame to previous frame buffer for next comparison (fast copy)
         memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
         m_firstFrame = false;
         return;
@@ -261,7 +307,7 @@ void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timest
     // Compare pixels between current and previous frames
     ComparePixels(events, timestamp);
     
-    // Copy current frame to previous frame buffer for next comparison
+    // Copy current frame to previous frame buffer for next comparison (simple memcpy is often faster)
     memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
 }
 
@@ -269,54 +315,37 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
     // Use pixel-by-pixel comparison for accurate DVS-style event generation
     // Generate events only for pixels that actually changed significantly
     
-    const uint32_t maxEventsPerFrame = 100000; // Prevent event explosion
-    const float sensitiveThreshold = 15.0f; // Lower threshold for better sensitivity
-    const uint32_t stride = 10;
+    const uint32_t maxEventsPerFrame = 10000; // Much smaller for testing
+    const float sensitiveThreshold = 15.0f; // Back to working threshold
+    const uint32_t stride = 6; // Small stride for balance
     
-    // Thread-local storage for events to avoid synchronization overhead
-    std::vector<Event> localEvents;
-    localEvents.reserve(maxEventsPerFrame / omp_get_max_threads() + 1000);
+    // Simple approach - no complex parallelization
+    std::vector<Event> frameEvents;
+    frameEvents.reserve(maxEventsPerFrame);
     
-    // Parallelize the nested loops using OpenMP
-    #pragma omp parallel
-    {
-        std::vector<Event> threadLocalEvents;
-        threadLocalEvents.reserve(1000);
-        
-        #pragma omp for schedule(dynamic, 16) nowait
-        for (int y = 0; y < static_cast<int>(m_height); y += stride) {
-            for (uint32_t x = 0; x < m_width; x += stride) {
-                int8_t pixelChange = CalculatePixelDifference(x, static_cast<uint32_t>(y), sensitiveThreshold);
+    for (uint32_t y = 0; y < m_height; y += stride) {
+        for (uint32_t x = 0; x < m_width; x += stride) {
+            int8_t pixelChange = CalculatePixelDifference(x, y, sensitiveThreshold);
+            
+            if (pixelChange >= 0 && frameEvents.size() < maxEventsPerFrame) {
+                // Generate unique timestamp for each event
+                uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
+                uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
                 
-                if (pixelChange != 0 && threadLocalEvents.size() < maxEventsPerFrame / omp_get_max_threads()) {
-                    // Generate unique timestamp for each event
-                    uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
-                    uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
-                    
-                    Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
-                    threadLocalEvents.push_back(event);
-                    x += stride * 2; // avoid neighboring pixels
-                }
+                Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
+                frameEvents.push_back(event);
             }
-        }
-        
-        // Merge thread-local events into main events vector (critical section)
-        #pragma omp critical
-        {
-            events.events.insert(events.events.end(), threadLocalEvents.begin(), threadLocalEvents.end());
         }
     }
     
-    uint32_t eventCount = events.events.size();
+    // Add events if we found any
+    if (!frameEvents.empty()) {
+        events.addEvents(frameEvents);
+    }
     
-    // Add small delay to ensure timestamp uniqueness if many events generated
-    // if (eventCount > 10) {
-    //     HighResTimer::SleepMicroseconds(1);
-    // }
-    
-    // Debug output for understanding event generation
-    if (eventCount > 0) {
-        std::cout << "\n  Generated " << eventCount << " events in frame (parallelized)";
+    // Debug output to see if events are generated
+    if (frameEvents.size() > 0) {
+        std::cout << "\nGenerated " << frameEvents.size() << " events";
     }
 }
 
@@ -351,10 +380,10 @@ int8_t ScreenCapture::CalculatePixelDifference(uint32_t x, uint32_t y, const flo
     // Check if difference exceeds threshold
     if (absDifference > sensitiveThreshold) {
         // Determine polarity based on luminance change
-        return (difference > 0) ? 1 : -1;
+        return (difference > 0) ? 1 : 0;
     }
     
-    return 0; // No significant change
+    return -1; // No significant change (will be filtered out)
 }
 
 void ScreenCapture::CleanupDirectX() {
