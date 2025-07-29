@@ -22,27 +22,27 @@ EventFileFormat EventFileFormats::DetectFormat(const std::string& filename) {
         } else {
             return EventFileFormat::TEXT_SPACE;
         }
-    } else if (ext == "evt") {
-        return EventFileFormat::BINARY_NEVS;
+    } else if (ext == "aedat") {
+        return EventFileFormat::BINARY_AEDAT;
     }
     
-    // Default to binary for unknown extensions
-    return EventFileFormat::BINARY_NEVS;
+    // Default to AEDAT binary for unknown extensions
+    return EventFileFormat::BINARY_AEDAT;
 }
 
 std::string EventFileFormats::GetExtension(EventFileFormat format) {
     switch (format) {
-        case EventFileFormat::BINARY_NEVS: return "evt";
+        case EventFileFormat::BINARY_AEDAT: return "aedat";
         case EventFileFormat::TEXT_CSV: return "csv";
         case EventFileFormat::TEXT_SPACE: return "txt";
-        default: return "evt";
+        default: return "aedat";
     }
 }
 
 bool EventFileFormats::WriteEvents(const EventStream& events, const std::string& filename, EventFileFormat format) {
     switch (format) {
-        case EventFileFormat::BINARY_NEVS:
-            return EventFile::WriteEvents(events, filename);
+        case EventFileFormat::BINARY_AEDAT:
+            return WriteAEDAT(events, filename);
         case EventFileFormat::TEXT_CSV:
             return WriteCSV(events, filename);
         case EventFileFormat::TEXT_SPACE:
@@ -57,8 +57,8 @@ bool EventFileFormats::ReadEvents(EventStream& events, const std::string& filena
     EventFileFormat format = DetectFormat(filename);
     
     switch (format) {
-        case EventFileFormat::BINARY_NEVS:
-            return EventFile::ReadEvents(events, filename);
+        case EventFileFormat::BINARY_AEDAT:
+            return ReadAEDAT(events, filename);
         case EventFileFormat::TEXT_CSV:
             return ReadCSV(events, filename);
         case EventFileFormat::TEXT_SPACE:
@@ -246,6 +246,109 @@ bool EventFileFormats::IsCSVFormat(const std::string& filename) {
 
 bool EventFileFormats::IsSpaceFormat(const std::string& filename) {
     return !IsCSVFormat(filename);
+}
+
+bool EventFileFormats::IsAEDATFormat(const std::string& filename) {
+    std::string ext = filename.substr(filename.find_last_of(".") + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    return ext == "aedat";
+}
+
+bool EventFileFormats::WriteAEDAT(const EventStream& events, const std::string& filename) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file for writing: " << filename << std::endl;
+        return false;
+    }
+    
+    // Write AEDAT header
+    AEDATHeader header;
+    header.magic[0] = 'A'; header.magic[1] = 'E'; header.magic[2] = 'D'; header.magic[3] = 'T';
+    header.version = 1;
+    header.width = events.width;
+    header.height = events.height;
+    header.start_time = events.start_time;
+    header.event_count = static_cast<uint32_t>(events.events.size());
+    
+    file.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    
+    // Write events in AEDAT format
+    for (const auto& event : events.events) {
+        AEDATEvent ae;
+        ae.timestamp = static_cast<uint32_t>(event.timestamp);
+        ae.x = event.x;
+        ae.y = event.y;
+        ae.polarity = (event.polarity > 0) ? 1 : 0; // Convert -1/+1 to 0/1
+        
+        file.write(reinterpret_cast<const char*>(&ae), sizeof(ae));
+    }
+    
+    file.close();
+    std::cout << "AEDAT file written successfully: " << filename << std::endl;
+    std::cout << "Events: " << events.events.size() << ", Size: " << 
+                 (sizeof(AEDATHeader) + events.events.size() * sizeof(AEDATEvent)) << " bytes" << std::endl;
+    return true;
+}
+
+bool EventFileFormats::ReadAEDAT(EventStream& events, const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open AEDAT file for reading: " << filename << std::endl;
+        return false;
+    }
+    
+    // Read and validate header
+    AEDATHeader header;
+    file.read(reinterpret_cast<char*>(&header), sizeof(header));
+    
+    if (file.gcount() != sizeof(header)) {
+        std::cerr << "Error: Could not read AEDAT header" << std::endl;
+        return false;
+    }
+    
+    // Validate magic number
+    if (header.magic[0] != 'A' || header.magic[1] != 'E' || 
+        header.magic[2] != 'D' || header.magic[3] != 'T') {
+        std::cerr << "Error: Invalid AEDAT magic number" << std::endl;
+        return false;
+    }
+    
+    // Validate version
+    if (header.version != 1) {
+        std::cerr << "Error: Unsupported AEDAT version: " << header.version << std::endl;
+        return false;
+    }
+    
+    // Set event stream metadata
+    events.width = header.width;
+    events.height = header.height;
+    events.start_time = header.start_time;
+    events.events.clear();
+    events.events.reserve(header.event_count);
+    
+    // Read events
+    for (uint32_t i = 0; i < header.event_count; i++) {
+        AEDATEvent ae;
+        file.read(reinterpret_cast<char*>(&ae), sizeof(ae));
+        
+        if (file.gcount() != sizeof(ae)) {
+            std::cerr << "Warning: Could not read event " << i << ", stopping" << std::endl;
+            break;
+        }
+        
+        Event event;
+        event.timestamp = ae.timestamp;
+        event.x = ae.x;
+        event.y = ae.y;
+        event.polarity = (ae.polarity == 1) ? 1 : -1; // Convert 0/1 to -1/+1
+        
+        events.events.push_back(event);
+    }
+    
+    file.close();
+    std::cout << "AEDAT file read successfully: " << filename << std::endl;
+    std::cout << "Events loaded: " << events.events.size() << std::endl;
+    return true;
 }
 
 std::string EventFileFormats::GetCurrentDateTime() {

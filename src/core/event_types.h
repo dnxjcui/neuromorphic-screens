@@ -78,4 +78,27 @@ struct EventStats {
     void calculate(const EventStream& stream);
 };
 
+/**
+ * AEDAT event structure for binary file format
+ */
+#pragma pack(push, 1)
+struct AEDATEvent {
+    uint32_t timestamp;  // in microseconds
+    uint16_t x, y;       // pixel coordinates
+    uint8_t polarity;    // +1 for brightness increase, -1 for decrease (stored as 0/1)
+};
+
+/**
+ * AEDAT file header
+ */
+struct AEDATHeader {
+    char magic[4];       // "AEDT"
+    uint32_t version;    // 1
+    uint32_t width;      // screen width
+    uint32_t height;     // screen height
+    uint64_t start_time; // recording start timestamp
+    uint32_t event_count; // number of events
+};
+#pragma pack(pop)
+
 } // namespace neuromorphic 

@@ -1,7 +1,9 @@
 # Neuromorphic Screens
 
-![Happy Demo](docs/media/happy.gif)
 ![Maxwell Demo](docs/media/maxwell.gif)
+
+<img src="docs/media/happy.gif" width="500" height="200" alt="Happy Demo" style="display: inline-block; margin-right: 10px;">
+<img src="docs/media/happy_original.gif" width="300" height="200" alt="Happy Original" style="display: inline-block;">
 
 A real-time event-based screen capture system that converts screen changes into neuromorphic events, inspired by Dynamic Vision Sensors (DVS). This system captures pixel-level changes as asynchronous, timestamped events and provides advanced visualization with professional ImGui interface, dimming effects, and export capabilities.
 
@@ -67,71 +69,6 @@ cmake --build . --config Release
 - **Binary (.evt)**: Efficient binary format for large datasets (recommended)
 - **CSV**: Comma-separated with headers (`timestamp,x,y,polarity`)
 - **Space-separated**: Compatible with rpg_dvs_ros (`timestamp x y polarity`)
-
-## ImGui GUI Features
-
-### Core Visualization
-- **Stable Operation**: Zero segmentation faults with DirectX 11 backend
-- **Automatic Playback**: Video-like operation - plays immediately when loaded
-- **Event-Based Timing**: All pixels recorded at one timepoint visualize simultaneously
-- **60 FPS Rendering**: Smooth, hardware-accelerated visualization
-- **Thread-Safe Architecture**: Mutex-protected event processing
-
-### Advanced Controls
-- **Speed Control**: 0.01x to 5.0x playback speed with precise adjustment
-- **Dimming Effects**: Gradual pixel dimming instead of instant removal
-- **Downsample Options**: 1x to 8x visualization downsampling for performance
-- **Progress Seeking**: Jump to any point in the recording
-- **Real-Time Statistics**: Event count, polarity distribution, and active dots
-
-### Export Functionality
-- **GIF Export**: High-quality animated GIF with palette optimization
-- **Video Export**: MP4 video with H.264 encoding
-- **FFmpeg Integration**: Professional-grade encoding with configurable settings
-- **Screen Capture**: Records the entire visualization window
-
-### Interface Layout
-- **Event Canvas**: Main visualization area with coordinate scaling
-- **Control Panel**: Play/pause/stop controls and speed adjustment
-- **Statistics Panel**: Real-time event metrics and recording information
-- **Export Panel**: GIF/video export options with duration and FPS settings
-
-## Performance
-
-- **Capture Rate**: 60 FPS with OpenMP parallelization
-- **Event Generation**: 95,000+ events per second tested
-- **Memory Efficient**: 13 bytes per event with optimized storage
-- **Visualization**: Hardware-accelerated 60 FPS with DirectX 11
-- **Export Quality**: Professional FFmpeg encoding for high-quality output
-
-## Architecture
-
-```
-src/
-├── core/                   # Event data structures and timing
-├── capture/               # Desktop Duplication screen capture
-├── visualization/         # ImGui DirectX 11 GUI (recommended)
-└── main.cpp              # Command-line interface
-    main_imgui.cpp        # ImGui GUI application
-```
-
-## Key Improvements
-
-### ✅ ImGui Implementation (Stable & Professional)
-- **Eliminated Segmentation Faults**: Complete replacement of problematic FLTK implementation
-- **DirectX 11 Backend**: Native Windows integration with hardware acceleration
-- **Thread-Safe Design**: Dedicated replay thread with mutex protection
-- **Professional Interface**: Modern UI with organized control panels
-
-### ✅ True Event-Based Visualization
-- **Fixed Frame Limiting Bug**: Removed artificial 200 events/frame limit
-- **Simultaneous Event Display**: All events at same timestamp now visualize together
-- **Proper Timing**: Event processing based on actual timestamps, not linear progression
-
-### ✅ Advanced Features
-- **Pixel Dimming**: Configurable gradual dimming instead of instant removal
-- **FFmpeg Export**: Professional GIF and video export with quality optimization
-- **Performance Optimization**: OpenMP parallelization for capture and rendering
 
 ## Usage Examples
 

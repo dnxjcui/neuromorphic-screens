@@ -46,13 +46,13 @@ public:
     void printUsage() const {
         std::cout << "Neuromorphic Screens - Event-based Screen Capture\n";
         std::cout << "Usage:\n";
-        std::cout << "  --capture --output <filename> [--duration <seconds>] [--format <binary|csv|txt>]\n";
+        std::cout << "  --capture --output <filename> [--duration <seconds>] [--format <aedat|csv|txt>]\n";
         std::cout << "  --replay --input <filename>\n";
         std::cout << "  --help\n";
         std::cout << "\nFor GUI visualization, use:\n";
         std::cout << "  neuromorphic_screens_imgui.exe --input <filename>\n";
         std::cout << "\nSupported formats:\n";
-        std::cout << "  binary - Binary .evt format (default, most efficient)\n";
+        std::cout << "  aedat  - AEDAT binary format (default, most efficient)\n";
         std::cout << "  csv    - CSV text format with headers\n";
         std::cout << "  txt    - Space-separated format (rpg_dvs_ros compatible)\n";
     }
@@ -63,7 +63,7 @@ public:
  */
 class NeuromorphicApp {
 public:
-    void captureEvents(const std::string& outputFile, int duration, EventFileFormat format = EventFileFormat::BINARY_NEVS) {
+    void captureEvents(const std::string& outputFile, int duration, EventFileFormat format = EventFileFormat::BINARY_AEDAT) {
         std::cout << "Starting neuromorphic screen capture for " << duration << " seconds..." << std::endl;
         
         ScreenCapture capture;
@@ -216,12 +216,14 @@ int main(int argc, char* argv[]) {
                 duration = (duration < 1) ? 1 : ((duration > 60) ? 60 : duration); // Clamp between 1-60 seconds
             }
             
-            EventFileFormat format = EventFileFormat::BINARY_NEVS;
+            EventFileFormat format = EventFileFormat::BINARY_AEDAT;
             std::string formatStr = parser.getValue("--format");
             if (formatStr == "csv") {
                 format = EventFileFormat::TEXT_CSV;
             } else if (formatStr == "txt") {
                 format = EventFileFormat::TEXT_SPACE;
+            } else if (formatStr == "aedat") {
+                format = EventFileFormat::BINARY_AEDAT;
             }
             
             app.captureEvents(outputFile, duration, format);
