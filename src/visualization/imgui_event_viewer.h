@@ -66,8 +66,7 @@ public:
     /**
      * Export functionality
      */
-    void ExportToGIF(const std::string& filename, float duration, int fps = 30);
-    void ExportToVideo(const std::string& filename, float duration, int fps = 30);
+    void ExportToGIF();
 
 private:
     // Window and DirectX resources
@@ -106,7 +105,7 @@ private:
     // Visualization options
     bool m_useDimming;           // Enable gradual dimming instead of instant removal
     float m_dimmingRate;         // Rate of dimming (0.1 = slow, 2.0 = fast)
-    bool m_showExportPanel;      // Show export options panel
+    bool m_isLooping;            // Enable continuous looping of replay
     
     /**
      * Initialize DirectX 11
@@ -140,7 +139,6 @@ private:
      */
     void RenderControlPanel();
     void RenderStatsPanel();
-    void RenderExportPanel();
     
     /**
      * Coordinate transformation

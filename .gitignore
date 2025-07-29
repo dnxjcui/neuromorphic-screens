@@ -78,3 +78,5 @@ conan/
 !REPORT.md
 *.html
 nul
+data/*
+palette.png

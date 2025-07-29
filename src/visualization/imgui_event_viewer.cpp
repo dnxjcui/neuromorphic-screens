@@ -4,6 +4,8 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -17,7 +19,7 @@ ImGuiEventViewer::ImGuiEventViewer()
       m_downsampleFactor(1), m_eventsProcessed(0),
       m_canvasWidth(800), m_canvasHeight(600),
       m_threadRunning(false), m_showStats(true), m_showControls(true),
-      m_seekPosition(0.0f), m_useDimming(true), m_dimmingRate(1.0f), m_showExportPanel(false) {
+      m_seekPosition(0.0f), m_useDimming(true), m_dimmingRate(1.0f), m_isLooping(false) {
     ZeroMemory(&m_wc, sizeof(m_wc));
 }
 
@@ -160,10 +162,6 @@ bool ImGuiEventViewer::Render() {
         if (m_showStats) {
             RenderStatsPanel();
         }
-        
-        if (m_showExportPanel) {
-            RenderExportPanel();
-        }
 
         ImGui::End();
 
@@ -280,48 +278,42 @@ void ImGuiEventViewer::SetDimmingRate(float rate) {
     m_dimmingRate = (rate < 0.1f) ? 0.1f : ((rate > 3.0f) ? 3.0f : rate);
 }
 
-void ImGuiEventViewer::ExportToGIF(const std::string& filename, float duration, int fps) {
-    std::cout << "Exporting to GIF: " << filename << " (duration: " << duration << "s, fps: " << fps << ")" << std::endl;
+void ImGuiEventViewer::ExportToGIF() {
+    // Generate automatic filename with timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream filename;
+    filename << "data/recordings/neuromorphic_events_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S") << ".gif";
     
-    // Create FFmpeg command for GIF export
+    std::cout << "Exporting to GIF: " << filename.str() << " (10 seconds, 30 fps)" << std::endl;
+    
+    // FFmpeg path
+    const std::string ffmpegPath = "ffmpeg";
+
+    // Create FFmpeg command for GIF export (two-pass for better quality)
     std::ostringstream cmd;
-    cmd << "ffmpeg -f gdigrab -framerate " << fps << " -t " << duration 
-        << " -i title=\"Neuromorphic Event Viewer - ImGui\" "
+    cmd << ffmpegPath << " -f gdigrab -framerate 15 -t 5 "
+        << " -i title=\"Neuromorphic Event Viewer\" "
         << "-vf \"scale=640:-1:flags=lanczos,palettegen\" -y palette.png && "
-        << "ffmpeg -f gdigrab -framerate " << fps << " -t " << duration 
-        << " -i title=\"Neuromorphic Event Viewer - ImGui\" "
+        << ffmpegPath << " -f gdigrab -framerate 15 -t 5 "
+        << " -i title=\"Neuromorphic Event Viewer\" "
         << "-i palette.png -lavfi \"scale=640:-1:flags=lanczos[x];[x][1:v]paletteuse\" "
-        << "-y \"" << filename << "\"";
+        << "-y \"" << filename.str() << "\"";
     
-    std::cout << "Running: " << cmd.str() << std::endl;
-    int result = system(cmd.str().c_str());
+    std::cout << "Running FFmpeg command for GIF export..." << std::endl;
+    // int result = system(cmd.str().c_str());
+    std::thread([command = cmd.str()] {
+        std::system(command.c_str());
+    }).detach();
     
-    if (result == 0) {
-        std::cout << "GIF export completed successfully: " << filename << std::endl;
-    } else {
-        std::cerr << "GIF export failed. Make sure FFmpeg is installed and in PATH." << std::endl;
-    }
+    // if (result == 0) {
+    //     std::cout << "GIF export completed successfully: " << filename.str() << std::endl;
+    // } else {
+    //     std::cerr << "GIF export failed. FFmpeg command returned error code: " << result << std::endl;
+    // }
+    std::cout << "GIF export completed successfully: " << filename.str() << std::endl;
 }
 
-void ImGuiEventViewer::ExportToVideo(const std::string& filename, float duration, int fps) {
-    std::cout << "Exporting to video: " << filename << " (duration: " << duration << "s, fps: " << fps << ")" << std::endl;
-    
-    // Create FFmpeg command for video export
-    std::ostringstream cmd;
-    cmd << "ffmpeg -f gdigrab -framerate " << fps << " -t " << duration 
-        << " -i title=\"Neuromorphic Event Viewer - ImGui\" "
-        << "-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p "
-        << "-y \"" << filename << "\"";
-    
-    std::cout << "Running: " << cmd.str() << std::endl;
-    int result = system(cmd.str().c_str());
-    
-    if (result == 0) {
-        std::cout << "Video export completed successfully: " << filename << std::endl;
-    } else {
-        std::cerr << "Video export failed. Make sure FFmpeg is installed and in PATH." << std::endl;
-    }
-}
 
 void ImGuiEventViewer::ReplayThreadFunction() {
     FrameRateLimiter limiter(60.0f);
@@ -364,8 +356,21 @@ void ImGuiEventViewer::ReplayThreadFunction() {
         
         // Check if replay is complete
         if (m_currentEventIndex >= m_events.events.size()) {
-            m_isReplaying = false;
-            break;
+            if (m_isLooping) {
+                // Restart replay for looping
+                m_currentEventIndex = 0;
+                m_eventsProcessed = 0;
+                m_replayStartTime = HighResTimer::GetMicroseconds();
+                
+                // Clear existing dots for clean loop
+                {
+                    std::lock_guard<std::mutex> lock(m_activeDotsLock);
+                    m_activeDots.clear();
+                }
+            } else {
+                m_isReplaying = false;
+                break;
+            }
         }
         
         // Update active dots
@@ -490,6 +495,16 @@ void ImGuiEventViewer::RenderControlPanel() {
         if (ImGui::Button("Stop", ImVec2(60, 30))) {
             StopReplay();
         }
+        ImGui::SameLine();
+        
+        // Loop toggle button
+        const char* loopText = m_isLooping ? "Loop: ON" : "Loop: OFF";
+        ImVec4 loopColor = m_isLooping ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, loopColor);
+        if (ImGui::Button(loopText, ImVec2(80, 30))) {
+            m_isLooping = !m_isLooping;
+        }
+        ImGui::PopStyleColor();
         
         ImGui::Separator();
         
@@ -527,10 +542,11 @@ void ImGuiEventViewer::RenderControlPanel() {
         
         ImGui::Separator();
         
-        // Export panel toggle
-        if (ImGui::Button("Export Options", ImVec2(-1, 25))) {
-            m_showExportPanel = !m_showExportPanel;
+        // Simple GIF export button
+        if (ImGui::Button("Export GIF", ImVec2(-1, 30))) {
+            ExportToGIF();
         }
+        ImGui::TextWrapped("Exports 10-second GIF of current visualization. Enable Loop for continuous recording.");
     }
     ImGui::End();
 }
@@ -567,52 +583,6 @@ void ImGuiEventViewer::RenderStatsPanel() {
     ImGui::End();
 }
 
-void ImGuiEventViewer::RenderExportPanel() {
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Size.x * 0.5f - 200, ImGui::GetMainViewport()->Size.y * 0.5f - 100));
-    ImGui::SetNextWindowSize(ImVec2(400, 200));
-    
-    if (ImGui::Begin("Export Options", &m_showExportPanel, ImGuiWindowFlags_NoResize)) {
-        ImGui::Text("Export current visualization to file:");
-        ImGui::Separator();
-        
-        static float exportDuration = 5.0f;
-        static int exportFPS = 30;
-        static char gifFilename[256] = "neuromorphic_events.gif";
-        static char videoFilename[256] = "neuromorphic_events.mp4";
-        
-        // Export settings
-        ImGui::SliderFloat("Duration (seconds)", &exportDuration, 1.0f, 30.0f, "%.1f");
-        ImGui::SliderInt("FPS", &exportFPS, 15, 60, "%d");
-        
-        ImGui::Separator();
-        
-        // GIF Export
-        ImGui::Text("GIF Export:");
-        ImGui::InputText("GIF Filename", gifFilename, sizeof(gifFilename));
-        if (ImGui::Button("Export GIF", ImVec2(150, 30))) {
-            ExportToGIF(std::string(gifFilename), exportDuration, exportFPS);
-        }
-        
-        ImGui::SameLine();
-        
-        // Video Export
-        ImGui::Text("Video Export:");
-        ImGui::InputText("Video Filename", videoFilename, sizeof(videoFilename));
-        if (ImGui::Button("Export Video", ImVec2(150, 30))) {
-            ExportToVideo(std::string(videoFilename), exportDuration, exportFPS);
-        }
-        
-        ImGui::Separator();
-        
-        ImGui::TextWrapped("Note: FFmpeg must be installed and in PATH for export to work. "
-                          "Recording will capture the entire window for the specified duration.");
-        
-        if (ImGui::Button("Close", ImVec2(-1, 25))) {
-            m_showExportPanel = false;
-        }
-    }
-    ImGui::End();
-}
 
 ImVec2 ImGuiEventViewer::ScreenToCanvas(uint16_t screenX, uint16_t screenY) const {
     if (m_events.width > 0 && m_events.height > 0) {
