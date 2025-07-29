@@ -24,6 +24,7 @@ CMakeCache.txt
 cmake_install.cmake
 Makefile
 *.cmake
+!CMakeLists.txt
 
 # Compiled binaries
 *.exe
@@ -75,3 +76,5 @@ conan/
 *.md
 !README.md
 !REPORT.md
+*.html
+nul

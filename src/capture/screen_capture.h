@@ -113,7 +113,7 @@ private:
     /**
      * Calculate pixel difference and determine polarity
      */
-    int8_t CalculatePixelDifference(uint32_t x, uint32_t y);
+    int8_t CalculatePixelDifference(uint32_t x, uint32_t y, const float & sensitiveThreshold);
     
     /**
      * Clean up DirectX resources
