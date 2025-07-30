@@ -24,7 +24,6 @@ CMakeCache.txt
 cmake_install.cmake
 Makefile
 *.cmake
-!CMakeLists.txt
 
 # Compiled binaries
 *.exe
@@ -80,3 +79,4 @@ conan/
 nul
 data/*
 palette.png
+!CMakeLists.txt

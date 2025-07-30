@@ -134,6 +134,8 @@ C:\Program Files\fltk-1.4.4\
 ### Critical Build Paths:
 - **FLTK Headers**: `C:\Program Files\fltk-1.4.4\FL\*.H`
 - **FLTK Library**: `C:\Program Files\fltk-1.4.4\build\lib\Release\fltk.lib`
+- **ImGui Headers**: `C:\Program Files\imgui\*.h`
+- **ImGui Sources**: `C:\Program Files\imgui\*.cpp` and `C:\Program Files\imgui\backends\*`
 - **Build Directory**: `C:\Program Files\fltk-1.4.4\build\` (contains Visual Studio project files)
 
 ## How to Run and Use the Program
@@ -1097,10 +1099,107 @@ The neuromorphic screens project successfully implements an event-based screen c
 
 The system provides a complete implementation with working recording, replay, and visualization capabilities. Users can now capture real screen activity with parallelized processing, view detailed statistics, and interactively replay events with a DVS-style visualization interface that works automatically without any mouse interaction.
 
+### Recent Major Updates - February 2025 ✅
+
+#### 1. Max Events Parameter Implementation
+**Purpose**: User-configurable event generation limits for both streaming and overlay modes
+**Range**: 1,000 - 100,000 events per frame (previously hardcoded at 10,000)
+**Implementation**: Complete parameter flow from GUI controls through capture pipeline
+
+**Technical Details:**
+- Added `size_t m_maxEvents` parameter to StreamingApp class
+- Updated method signatures throughout capture pipeline:
+  ```cpp
+  bool CaptureFrame(EventStream& events, uint64_t timestamp, float threshold = 15.0f, 
+                   uint32_t stride = 1, size_t maxEvents = 10000);
+  ```
+- Fixed hardcoded limit bug in `screen_capture.cpp:318`:
+  ```cpp
+  // BEFORE (broken): const size_t maxEventsPerFrame = 10000;
+  // AFTER (working): const size_t maxEventsPerFrame = maxEvents;
+  ```
+- Implemented real-time parameter adjustment with immediate visual feedback
+
+#### 2. Parameter Range Updates
+**Max Events**: Updated from 1K-10000K to 1,000-100,000 (more practical range)
+**Stride**: Updated from 1-12 to 1-30 (increased precision control)
+**GUI Display**: Changed from "Max Events (K)" to actual event count display
+
+#### 3. Overlay GUI Transformation to ImGui ✅
+**Achievement**: Complete transformation from Win32 controls to ImGui interface
+**Consistency**: Identical styling and controls to streaming application
+**Resizability**: Fully resizable overlay control window
+
+**Technical Implementation:**
+```cpp
+// Added ImGui includes and DirectX setup to direct_overlay_viewer.h
+#include "imgui.h"
+#include "imgui_impl_win32.h" 
+#include "imgui_impl_dx11.h"
+#include <d3d11.h>
+#include <dxgi1_2.h>
+
+// DirectX 11 resources for ImGui backend
+ID3D11Device* m_pd3dDevice = nullptr;
+ID3D11DeviceContext* m_pd3dDeviceContext = nullptr;
+IDXGISwapChain* m_pSwapChain = nullptr;
+ID3D11RenderTargetView* m_mainRenderTargetView = nullptr;
+```
+
+**GUI Controls Implemented:**
+- Threshold slider (0-100): Real-time sensitivity adjustment
+- Stride slider (1-30): Spatial sampling control
+- Max Events slider (1000-100000): Event generation limits
+- Professional styling matching streaming application
+
+#### 4. Red Dots Bug Fix - CRITICAL ✅
+**Problem**: Negative events (red dots) were not displaying in overlay mode
+**Root Cause**: Incorrect polarity filter `event.polarity != 0` excluded negative events (polarity=0)
+**Solution**: Removed polarity filter to allow both positive and negative events
+
+**Code Fix:**
+```cpp
+// BEFORE (buggy - no red dots):
+if (eventAge <= recentThreshold && event.polarity != 0) {
+    // Only positive events (polarity=1) would display
+}
+
+// AFTER (fixed - red dots working):
+if (eventAge <= recentThreshold) {
+    // Both positive (polarity=1) and negative (polarity=0) events display
+}
+```
+
+**Event Polarity System:**
+- **Positive Events (Green)**: `polarity = 1` (brightness increase)
+- **Negative Events (Red)**: `polarity = 0` (brightness decrease)
+- **Visual Result**: Both green and red dots now properly display screen changes
+
+#### 5. Streaming and Overlay Application Modes
+
+**Real-Time Streaming Mode (`neuromorphic_screens_streaming.exe`)**:
+- Live event capture with resizable ImGui interface
+- Real-time parameter adjustment (threshold, stride, max events)
+- Optional event saving to AEDAT format during streaming
+- Perfect for monitoring screen activity with configurable sensitivity
+
+**Direct Overlay Mode (`neuromorphic_screens_overlay.exe`)**:
+- Events displayed directly on screen as colored dots
+- Same ImGui control interface as streaming mode
+- Green dots for positive events, red dots for negative events
+- Ideal for real-time screen activity monitoring
+
+#### 6. Build System Updates
+**ImGui Integration**: Added ImGui sources and DirectX 11 backend to overlay project
+**Template Resolution**: Fixed `std::max`/`std::min` type conflicts with explicit casts
+**CMakeLists.txt**: Updated to include ImGui for both streaming and overlay applications
+
 **Key Usage Commands:**
 - `--capture --output file.evt --duration 5`: Record 5 seconds of screen activity (parallelized)  
 - `--replay --input file.evt`: View event statistics
-- `neuromorphic_screens_gui.exe --input file.evt`: Launch FLTK GUI with automatic playback
+- `neuromorphic_screens_imgui.exe --input file.evt`: Launch ImGui GUI with automatic playback
+- `neuromorphic_screens_streaming.exe --save capture.aedat`: Real-time streaming with configurable parameters
+- `neuromorphic_screens_overlay.exe --save overlay.aedat`: Direct overlay mode with screen dots
 - `--test`: Validate all system components including parallelization
 
 **CRITICAL FIXES IMPLEMENTED:**

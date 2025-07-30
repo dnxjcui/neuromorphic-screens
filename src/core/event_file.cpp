@@ -40,7 +40,7 @@ bool EventFile::WriteEvents(const EventStream& events, const std::string& filena
     header.width = events.width;
     header.height = events.height;
     header.start_time = events.start_time;
-    header.event_count = static_cast<uint32_t>(events.events.size());
+    header.event_count = static_cast<uint32_t>(events.size());
     
     // Write header
     if (!WriteHeader(header, file)) {
@@ -49,10 +49,10 @@ bool EventFile::WriteEvents(const EventStream& events, const std::string& filena
     }
     
     // Write events
-    size_t written = fwrite(events.events.data(), sizeof(Event), events.events.size(), file);
+    size_t written = fwrite(events.data(), sizeof(Event), events.size(), file);
     fclose(file);
     
-    if (written != events.events.size()) {
+    if (written != events.size()) {
         std::cerr << "Failed to write all events to file" << std::endl;
         return false;
     }
@@ -86,8 +86,8 @@ bool EventFile::ReadEvents(EventStream& events, const std::string& filename) {
     events.start_time = header.start_time;
     
     // Read events
-    events.events.resize(header.event_count);
-    size_t read = fread(events.events.data(), sizeof(Event), header.event_count, file);
+    events.resize(header.event_count);
+    size_t read = fread(events.data(), sizeof(Event), header.event_count, file);
     fclose(file);
     
     if (read != header.event_count) {
@@ -120,53 +120,55 @@ bool EventFile::GetFileStats(const std::string& filename, EventFileHeader& heade
 }
 
 void EventFile::SortEventsByTime(EventStream& events) {
-    std::sort(events.events.begin(), events.events.end(), 
+    std::sort(events.begin(), events.end(), 
               [](const Event& a, const Event& b) {
                   return a.timestamp < b.timestamp;
               });
 }
 
 void EventFile::RemoveDuplicates(EventStream& events) {
-    auto it = std::unique(events.events.begin(), events.events.end(),
+    auto it = std::unique(events.begin(), events.end(),
                          [](const Event& a, const Event& b) {
                              return a.timestamp == b.timestamp && 
                                     a.x == b.x && a.y == b.y;
                          });
-    events.events.erase(it, events.events.end());
+    events.erase(it, events.end());
 }
 
 void EventFile::FilterByTimeRange(EventStream& events, uint64_t startTime, uint64_t endTime) {
-    events.events.erase(
-        std::remove_if(events.events.begin(), events.events.end(),
+    events.erase(
+        std::remove_if(events.begin(), events.end(),
                       [startTime, endTime](const Event& event) {
                           return event.timestamp < startTime || event.timestamp > endTime;
                       }),
-        events.events.end()
+        events.end()
     );
 }
 
 void EventFile::FilterByRegion(EventStream& events, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2) {
-    events.events.erase(
-        std::remove_if(events.events.begin(), events.events.end(),
+    events.erase(
+        std::remove_if(events.begin(), events.end(),
                       [x1, y1, x2, y2](const Event& event) {
                           return event.x < x1 || event.x > x2 || 
                                  event.y < y1 || event.y > y2;
                       }),
-        events.events.end()
+        events.end()
     );
 }
 
 void EventFile::CompressEvents(EventStream& events, float threshold) {
-    if (events.events.size() < 2) return;
+    if (events.size() < 2) return;
     
+    // Get a copy of events for processing
+    auto eventsCopy = events.getEventsCopy();
     std::vector<Event> compressed;
-    compressed.reserve(events.events.size());
+    compressed.reserve(eventsCopy.size());
     
-    compressed.push_back(events.events[0]);
+    compressed.push_back(eventsCopy[0]);
     
-    for (size_t i = 1; i < events.events.size(); i++) {
+    for (size_t i = 1; i < eventsCopy.size(); i++) {
         const Event& prev = compressed.back();
-        const Event& curr = events.events[i];
+        const Event& curr = eventsCopy[i];
         
         uint64_t timeDiff = curr.timestamp - prev.timestamp;
         uint16_t xDiff = (curr.x > prev.x) ? (curr.x - prev.x) : (prev.x - curr.x);
@@ -180,7 +182,9 @@ void EventFile::CompressEvents(EventStream& events, float threshold) {
         }
     }
     
-    events.events = std::move(compressed);
+    // Replace events with compressed version
+    events.clear();
+    events.addEvents(compressed);
 }
 
 bool EventFile::WriteHeader(const EventFileHeader& header, FILE* file) {

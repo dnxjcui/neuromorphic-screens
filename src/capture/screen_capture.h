@@ -35,6 +35,7 @@ private:
     // Event generation
     float m_changeThreshold;
     uint32_t m_pixelThreshold; // Threshold for pixel change detection
+    
 
 public:
     ScreenCapture();
@@ -58,7 +59,12 @@ public:
     /**
      * Capture a frame and generate events
      */
-    bool CaptureFrame(EventStream& events, uint64_t timestamp);
+    bool CaptureFrame(EventStream& events, uint64_t timestamp, float threshold = 15.0f, uint32_t stride = 1, size_t maxEvents = 10000);
+    
+    /**
+     * Capture a frame and generate bit-packed representation (much more efficient)
+     */
+    bool CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t timestamp, float threshold = 15.0f, uint32_t stride = 1);
     
     /**
      * Get screen dimensions
@@ -83,6 +89,7 @@ public:
      * Get change threshold
      */
     float GetChangeThreshold() const { return m_changeThreshold; }
+    
 
 private:
     /**
@@ -103,12 +110,12 @@ private:
     /**
      * Generate events from pixel differences
      */
-    void GenerateEventsFromFrame(EventStream& events, uint64_t timestamp);
+    void GenerateEventsFromFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents);
     
     /**
      * Compare pixels between current and previous frames
      */
-    void ComparePixels(EventStream& events, uint64_t timestamp);
+    void ComparePixels(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents);
     
     /**
      * Calculate pixel difference and determine polarity
