@@ -3,7 +3,8 @@
 
 namespace neuromorphic {
 
-StreamingApp::StreamingApp() : m_isRunning(false), m_saveFormat(EventFileFormat::BINARY_AEDAT) {}
+StreamingApp::StreamingApp() : m_isRunning(false), m_saveFormat(EventFileFormat::BINARY_AEDAT), 
+    m_threshold(15.0f), m_stride(1) {} // Default values for streaming: threshold=15.0, stride=1
 
 void StreamingApp::setSaveOptions(const std::string& filename, EventFileFormat format) {
     m_saveFilename = filename;
@@ -70,8 +71,8 @@ void StreamingApp::captureLoop() {
     while (m_isRunning.load()) {
         uint64_t currentTime = HighResTimer::GetMicroseconds();
         
-        // Capture frame and generate events
-        if (m_capture.CaptureFrame(m_eventStream, currentTime)) {
+        // Capture frame and generate events with current parameters
+        if (m_capture.CaptureFrame(m_eventStream, currentTime, m_threshold, m_stride)) {
             // Events are automatically added to m_eventStream
         }
         

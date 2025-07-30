@@ -7,6 +7,7 @@
 #include <atomic>
 #include <thread>
 #include <string>
+#include <algorithm>
 
 namespace neuromorphic {
 
@@ -22,6 +23,10 @@ private:
     std::string m_saveFilename;
     EventFileFormat m_saveFormat;
     
+    // Capture parameters
+    float m_threshold;
+    uint32_t m_stride;
+    
 public:
     StreamingApp();
     
@@ -32,6 +37,12 @@ public:
     
     const EventStream& getEventStream() const { return m_eventStream; }
     bool isRunning() const { return m_isRunning.load(); }
+    
+    // Parameter control
+    void setThreshold(float threshold) { m_threshold = (std::max)(0.0f, (std::min)(100.0f, threshold)); }
+    void setStride(uint32_t stride) { m_stride = (std::max)(1u, (std::min)(12u, stride)); }
+    float getThreshold() const { return m_threshold; }
+    uint32_t getStride() const { return m_stride; }
     
 private:
     void captureLoop();

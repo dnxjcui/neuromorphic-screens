@@ -87,7 +87,7 @@ void ScreenCapture::StopCapture() {
     std::cout << "Screen capture stopped" << std::endl;
 }
 
-bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp) {
+bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride) {
     if (!m_captureActive || !m_initialized) {
         return false;
     }
@@ -97,8 +97,8 @@ bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp) {
         return false;
     }
     
-    // Generate events from pixel differences
-    GenerateEventsFromFrame(events, timestamp);
+    // Generate events from pixel differences with dynamic parameters
+    GenerateEventsFromFrame(events, timestamp, threshold, stride);
     
     return true;
 }
@@ -254,7 +254,7 @@ bool ScreenCapture::CaptureFrameDesktopDuplication() {
     return true;
 }
 
-bool ScreenCapture::CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t timestamp) {
+bool ScreenCapture::CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t timestamp, float threshold, uint32_t stride) {
     if (!m_captureActive || !m_initialized) {
         return false;
     }
@@ -275,13 +275,13 @@ bool ScreenCapture::CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t t
     }
     
     // Generate bit-packed representation (optimized)
-    const float sensitiveThreshold = 20.0f;
+    // Use the provided threshold and stride parameters
     
     // Use smaller chunk size for better load balancing
     #pragma omp parallel for schedule(dynamic, 32)
-    for (int y = 0; y < static_cast<int>(m_height); y++) {
-        for (uint32_t x = 0; x < m_width; x++) {
-            int8_t pixelChange = CalculatePixelDifference(x, static_cast<uint32_t>(y), sensitiveThreshold);
+    for (int y = 0; y < static_cast<int>(m_height); y += stride) {
+        for (uint32_t x = 0; x < m_width; x += stride) {
+            int8_t pixelChange = CalculatePixelDifference(x, static_cast<uint32_t>(y), threshold);
             
             if (pixelChange >= 0) { // 0 or 1 (decrease or increase)
                 frame.setPixel(x, y, pixelChange == 1);
@@ -295,7 +295,7 @@ bool ScreenCapture::CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t t
     return true;
 }
 
-void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timestamp) {
+void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride) {
     // Skip first frame (no previous frame to compare against)
     if (m_firstFrame) {
         // Copy current frame to previous frame buffer for next comparison (fast copy)
@@ -305,19 +305,18 @@ void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timest
     }
     
     // Compare pixels between current and previous frames
-    ComparePixels(events, timestamp);
+    ComparePixels(events, timestamp, threshold, stride);
     
     // Copy current frame to previous frame buffer for next comparison (simple memcpy is often faster)
     memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
 }
 
-void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
+void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride) {
     // Use pixel-by-pixel comparison for accurate DVS-style event generation
     // Generate events only for pixels that actually changed significantly
     
     const uint32_t maxEventsPerFrame = 10000; // Much smaller for testing
-    const float sensitiveThreshold = 15.0f; // Back to working threshold
-    const uint32_t stride = 6; // Small stride for balance
+    // Use the provided threshold and stride parameters instead of hardcoded values
     
     // Simple approach - no complex parallelization
     std::vector<Event> frameEvents;
@@ -325,7 +324,7 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp) {
     
     for (uint32_t y = 0; y < m_height; y += stride) {
         for (uint32_t x = 0; x < m_width; x += stride) {
-            int8_t pixelChange = CalculatePixelDifference(x, y, sensitiveThreshold);
+            int8_t pixelChange = CalculatePixelDifference(x, y, threshold);
             
             if (pixelChange >= 0 && frameEvents.size() < maxEventsPerFrame) {
                 // Generate unique timestamp for each event

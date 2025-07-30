@@ -2,6 +2,15 @@
 #include <iostream>
 #include <algorithm>
 
+// Constants for Windows capture exclusion (Windows 10 2004+)
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
+
+#ifndef DWMWA_EXCLUDED_FROM_CAPTURE
+#define DWMWA_EXCLUDED_FROM_CAPTURE 25
+#endif
+
 namespace neuromorphic {
 
 DirectOverlayViewer::DirectOverlayViewer(StreamingApp& streamingApp) : 
@@ -10,7 +19,10 @@ DirectOverlayViewer::DirectOverlayViewer(StreamingApp& streamingApp) :
     m_positiveBrush(nullptr), m_negativeBrush(nullptr),
     m_threadRunning(false), m_overlayWindow(nullptr),
     m_screenWidth(0), m_screenHeight(0),
-    m_useDimming(false), m_dimmingRate(1.0f) {
+    m_useDimming(false), m_dimmingRate(1.0f),
+    m_threshold(15.0f), m_stride(6),  // Default values for overlay: threshold=15.0, stride=6
+    m_controlWindow(nullptr), m_thresholdSlider(nullptr), m_strideSlider(nullptr),
+    m_thresholdLabel(nullptr), m_strideLabel(nullptr) {
 }
 
 DirectOverlayViewer::~DirectOverlayViewer() {
@@ -27,6 +39,13 @@ bool DirectOverlayViewer::Initialize() {
     // Create overlay window
     if (!CreateOverlayWindow()) {
         std::cerr << "Failed to create overlay window" << std::endl;
+        return false;
+    }
+    
+    // Create control window
+    if (!CreateControlWindow()) {
+        std::cerr << "Failed to create control window" << std::endl;
+        Cleanup();
         return false;
     }
     
@@ -85,9 +104,9 @@ bool DirectOverlayViewer::CreateOverlayWindow() {
         return false;
     }
     
-    // Create layered window for true transparency (remove WS_EX_TRANSPARENT for visibility)
+    // Create layered window for true transparency with click-through capability
     m_overlayWindow = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
         L"DirectOverlayWindow",
         L"Neuromorphic Event Overlay",
         WS_POPUP,
@@ -103,6 +122,29 @@ bool DirectOverlayViewer::CreateOverlayWindow() {
     // Show the overlay window - transparency handled by UpdateLayeredWindow
     ShowWindow(m_overlayWindow, SW_SHOWNOACTIVATE);
     UpdateWindow(m_overlayWindow);
+    
+    // Exclude this window from ALL capture paths (Windows 10 2004+)
+    BOOL affinity_ok = SetWindowDisplayAffinity(m_overlayWindow, WDA_EXCLUDEFROMCAPTURE);
+    
+    // Also use DWM attribute for future-proofing
+    BOOL exclude = TRUE;
+    HRESULT dwm_ok = DwmSetWindowAttribute(
+        m_overlayWindow,
+        DWMWA_EXCLUDED_FROM_CAPTURE,
+        &exclude,
+        sizeof(exclude)
+    );
+    
+    if (!affinity_ok) {
+        DWORD err = GetLastError();
+        std::cerr << "SetWindowDisplayAffinity failed (" << err << "). Overlay may still recurse." << std::endl;
+    }
+    
+    if (FAILED(dwm_ok)) {
+        std::cerr << "DwmSetWindowAttribute failed (0x" << std::hex << dwm_ok << "). Using fallback exclusion." << std::endl;
+    }
+    
+    std::cout << "Overlay window excluded from screen capture APIs" << std::endl;
     
     return true;
 }
@@ -172,6 +214,10 @@ void DirectOverlayViewer::RenderThreadFunction() {
     FrameRateLimiter limiter(30.0f); // Lower frame rate for stability
     
     while (m_threadRunning.load()) {
+        // Update streaming app parameters with current overlay settings
+        m_streamingApp.setThreshold(m_threshold);
+        m_streamingApp.setStride(m_stride);
+        
         // Get latest events from streaming app
         const EventStream& stream = m_streamingApp.getEventStream();
         
@@ -187,12 +233,13 @@ void DirectOverlayViewer::RenderThreadFunction() {
                 // Get thread-safe copy of events
                 auto eventsCopy = stream.getEventsCopy();
                 
-                // Only show events from the last 100ms
+                // Only show events from the last 100ms with proper event detection
                 for (const auto& event : eventsCopy) {
                     uint64_t eventAbsoluteTime = stream.start_time + event.timestamp;
                     uint64_t eventAge = currentTime - eventAbsoluteTime;
                     
-                    if (eventAge <= recentThreshold) {
+                    // Apply event detection logic similar to implementation guide
+                    if (eventAge <= recentThreshold && event.polarity != 0) {
                         m_activeDots.push_back({event, 1.0f});
                     }
                 }
@@ -267,13 +314,13 @@ void DirectOverlayViewer::RenderOverlay() {
         for (const auto& dot : m_activeDots) {
             const Event& event = dot.event;
             
-            // Select color based on polarity (1=green increase, 0=red decrease)
-            uint32_t color = (event.polarity == 1) ? 
-                0xFF00FF00 : // Green with full alpha (ARGB format)
-                0xFFFF0000;  // Red with full alpha
+            // Select color based on polarity - Green for positive, Red for negative (per implementation guide)
+            uint32_t color = (event.polarity > 0) ? 
+                0xFF00FF00 : // Green with full alpha for positive events (ARGB format)
+                0xFFFF0000;  // Red with full alpha for negative events
             
-            // Draw a larger, more visible dot
-            int radius = 3; // Larger dot for visibility
+            // Draw event highlight with radius as recommended in implementation guide
+            int radius = 2; // 2.0f radius per implementation guide
             int centerX = event.x;
             int centerY = event.y;
             
@@ -316,6 +363,7 @@ void DirectOverlayViewer::Cleanup() {
     
     CleanupGDI();
     DestroyOverlayWindow();
+    DestroyControlWindow();
 }
 
 
@@ -351,6 +399,15 @@ void DirectOverlayViewer::DestroyOverlayWindow() {
     UnregisterClassW(L"DirectOverlayWindow", GetModuleHandle(nullptr));
 }
 
+void DirectOverlayViewer::DestroyControlWindow() {
+    if (m_controlWindow) {
+        DestroyWindow(m_controlWindow);
+        m_controlWindow = nullptr;
+    }
+    
+    UnregisterClassW(L"DirectOverlayControlWindow", GetModuleHandle(nullptr));
+}
+
 LRESULT WINAPI DirectOverlayViewer::OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
@@ -366,6 +423,135 @@ LRESULT WINAPI DirectOverlayViewer::OverlayWndProc(HWND hWnd, UINT msg, WPARAM w
         
     default:
         return DefWindowProcW(hWnd, msg, wParam, lParam);
+    }
+}
+
+bool DirectOverlayViewer::CreateControlWindow() {
+    // Register control window class with dark styling
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = ControlWndProc;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = L"DirectOverlayControlWindow";
+    wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 32)); // Dark background similar to ImGui
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    
+    if (!RegisterClassW(&wc)) {
+        return false;
+    }
+    
+    // Create control window in top-right corner with improved size
+    int windowWidth = 220;
+    int windowHeight = 140;
+    int x = GetSystemMetrics(SM_CXSCREEN) - windowWidth - 20;
+    int y = 20;
+    
+    m_controlWindow = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        L"DirectOverlayControlWindow",
+        L"Neuromorphic Overlay Controls",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        x, y, windowWidth, windowHeight,
+        nullptr, nullptr, GetModuleHandle(nullptr), this
+    );
+    
+    if (!m_controlWindow) {
+        return false;
+    }
+    
+    // Create labels with better styling
+    m_thresholdLabel = CreateWindowW(L"STATIC", L"Threshold: 15.0",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        15, 15, 180, 20,
+        m_controlWindow, nullptr, GetModuleHandle(nullptr), nullptr);
+    
+    // Create threshold slider with better positioning
+    m_thresholdSlider = CreateWindowW(L"msctls_trackbar32", L"",
+        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | TBS_TOOLTIPS,
+        15, 35, 180, 30,
+        m_controlWindow, (HMENU)1001, GetModuleHandle(nullptr), nullptr);
+    
+    m_strideLabel = CreateWindowW(L"STATIC", L"Stride: 6",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        15, 75, 180, 20,
+        m_controlWindow, nullptr, GetModuleHandle(nullptr), nullptr);
+    
+    // Create stride slider with better positioning  
+    m_strideSlider = CreateWindowW(L"msctls_trackbar32", L"",
+        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | TBS_TOOLTIPS,
+        15, 95, 180, 30,
+        m_controlWindow, (HMENU)1002, GetModuleHandle(nullptr), nullptr);
+    
+    // Set slider ranges
+    SendMessage(m_thresholdSlider, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+    SendMessage(m_thresholdSlider, TBM_SETPOS, TRUE, (LPARAM)m_threshold);
+    
+    SendMessage(m_strideSlider, TBM_SETRANGE, TRUE, MAKELONG(1, 12));
+    SendMessage(m_strideSlider, TBM_SETPOS, TRUE, (LPARAM)m_stride);
+    
+    ShowWindow(m_controlWindow, SW_SHOW);
+    return true;
+}
+
+LRESULT WINAPI DirectOverlayViewer::ControlWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    DirectOverlayViewer* viewer = nullptr;
+    
+    if (msg == WM_CREATE) {
+        CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
+        viewer = (DirectOverlayViewer*)cs->lpCreateParams;
+        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)viewer);
+    } else {
+        viewer = (DirectOverlayViewer*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+    }
+    
+    switch (msg) {
+    case WM_CTLCOLORSTATIC:
+        {
+            // Make static controls (labels) look like ImGui - white text on dark background
+            HDC hdcStatic = (HDC)wParam;
+            SetTextColor(hdcStatic, RGB(255, 255, 255)); // White text
+            SetBkColor(hdcStatic, RGB(32, 32, 32)); // Dark background
+            return (LRESULT)CreateSolidBrush(RGB(32, 32, 32));
+        }
+    case WM_HSCROLL:
+        if (viewer) {
+            HWND control = (HWND)lParam;
+            int pos = SendMessage(control, TBM_GETPOS, 0, 0);
+            
+            if (control == viewer->m_thresholdSlider) {
+                viewer->SetThreshold((float)pos);
+                viewer->UpdateSliderLabels();
+            } else if (control == viewer->m_strideSlider) {
+                viewer->SetStride((uint32_t)pos);
+                viewer->UpdateSliderLabels();
+            }
+        }
+        return 0;
+        
+    case WM_CLOSE:
+        // When control window is closed, stop the entire overlay and application
+        if (viewer) {
+            viewer->StopOverlay();
+            // Signal the main application to exit
+            PostQuitMessage(0);
+        }
+        return 0;
+        
+    default:
+        return DefWindowProcW(hWnd, msg, wParam, lParam);
+    }
+}
+
+void DirectOverlayViewer::UpdateSliderLabels() {
+    if (m_thresholdLabel) {
+        wchar_t buffer[50];
+        swprintf_s(buffer, L"Threshold: %.1f", m_threshold);
+        SetWindowTextW(m_thresholdLabel, buffer);
+    }
+    
+    if (m_strideLabel) {
+        wchar_t buffer[50];
+        swprintf_s(buffer, L"Stride: %u", m_stride);
+        SetWindowTextW(m_strideLabel, buffer);
     }
 }
 
