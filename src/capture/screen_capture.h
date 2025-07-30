@@ -59,7 +59,7 @@ public:
     /**
      * Capture a frame and generate events
      */
-    bool CaptureFrame(EventStream& events, uint64_t timestamp, float threshold = 15.0f, uint32_t stride = 1);
+    bool CaptureFrame(EventStream& events, uint64_t timestamp, float threshold = 15.0f, uint32_t stride = 1, size_t maxEvents = 10000);
     
     /**
      * Capture a frame and generate bit-packed representation (much more efficient)
@@ -110,12 +110,12 @@ private:
     /**
      * Generate events from pixel differences
      */
-    void GenerateEventsFromFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride);
+    void GenerateEventsFromFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents);
     
     /**
      * Compare pixels between current and previous frames
      */
-    void ComparePixels(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride);
+    void ComparePixels(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents);
     
     /**
      * Calculate pixel difference and determine polarity

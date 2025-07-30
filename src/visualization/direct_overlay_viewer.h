@@ -16,6 +16,11 @@
 #include <windows.h>
 #include <dwmapi.h>
 
+// ImGui includes
+#include <imgui.h>
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx11.h>
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d2d1.lib")
@@ -68,14 +73,13 @@ private:
     uint32_t m_stride;  // Pixel stride (1-12)
     size_t m_maxEvents; // Maximum events in context window
     
-    // Control GUI
+    // ImGui Control GUI
     HWND m_controlWindow;
-    HWND m_thresholdSlider;
-    HWND m_strideSlider;
-    HWND m_maxEventsSlider;
-    HWND m_thresholdLabel;
-    HWND m_strideLabel;
-    HWND m_maxEventsLabel;
+    ID3D11Device* m_d3dDevice;
+    ID3D11DeviceContext* m_d3dDeviceContext;
+    IDXGISwapChain* m_swapChain;
+    ID3D11RenderTargetView* m_mainRenderTargetView;
+    bool m_showControls;
     
 public:
     DirectOverlayViewer(StreamingApp& streamingApp);
@@ -93,8 +97,8 @@ public:
     
     // Event capture parameters
     void SetThreshold(float threshold) { m_threshold = (std::max)(0.0f, (std::min)(100.0f, threshold)); }
-    void SetStride(uint32_t stride) { m_stride = (std::max)(1u, (std::min)(12u, stride)); }
-    void SetMaxEvents(size_t maxEvents) { m_maxEvents = (std::max)(static_cast<size_t>(1000), (std::min)(static_cast<size_t>(10000000), maxEvents)); }
+    void SetStride(uint32_t stride) { m_stride = (std::max)(1u, (std::min)(30u, stride)); }
+    void SetMaxEvents(size_t maxEvents) { m_maxEvents = (std::max)(static_cast<size_t>(1000), (std::min)(static_cast<size_t>(100000), maxEvents)); }
     float GetThreshold() const { return m_threshold; }
     uint32_t GetStride() const { return m_stride; }
     size_t GetMaxEvents() const { return m_maxEvents; }
@@ -107,6 +111,10 @@ private:
     bool CreateControlWindow();
     bool InitializeGDI();
     bool CreateBrushes();
+    bool CreateDeviceD3D(HWND hWnd);
+    void CleanupDeviceD3D();
+    void CreateRenderTarget();
+    void CleanupRenderTarget();
     
     // Rendering
     void RenderThreadFunction();
@@ -124,8 +132,8 @@ private:
     static LRESULT WINAPI OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static LRESULT WINAPI ControlWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     
-    // Control updates
-    void UpdateSliderLabels();
+    // ImGui rendering
+    void RenderControlPanel();
 };
 
 } // namespace neuromorphic

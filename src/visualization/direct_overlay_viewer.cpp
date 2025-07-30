@@ -2,6 +2,8 @@
 #include <iostream>
 #include <algorithm>
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 // Constants for Windows capture exclusion (Windows 10 2004+)
 #ifndef WDA_EXCLUDEFROMCAPTURE
 #define WDA_EXCLUDEFROMCAPTURE 0x00000011
@@ -21,8 +23,8 @@ DirectOverlayViewer::DirectOverlayViewer(StreamingApp& streamingApp) :
     m_screenWidth(0), m_screenHeight(0),
     m_useDimming(false), m_dimmingRate(1.0f),
     m_threshold(15.0f), m_stride(6), m_maxEvents(constants::MAX_EVENT_CONTEXT_WINDOW),  // Default values for overlay: threshold=15.0, stride=6, maxEvents=1000000
-    m_controlWindow(nullptr), m_thresholdSlider(nullptr), m_strideSlider(nullptr), m_maxEventsSlider(nullptr),
-    m_thresholdLabel(nullptr), m_strideLabel(nullptr), m_maxEventsLabel(nullptr) {
+    m_controlWindow(nullptr), m_d3dDevice(nullptr), m_d3dDeviceContext(nullptr), 
+    m_swapChain(nullptr), m_mainRenderTargetView(nullptr), m_showControls(true) {
 }
 
 DirectOverlayViewer::~DirectOverlayViewer() {
@@ -402,6 +404,14 @@ void DirectOverlayViewer::DestroyOverlayWindow() {
 
 void DirectOverlayViewer::DestroyControlWindow() {
     if (m_controlWindow) {
+        // Cleanup ImGui
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        
+        // Cleanup DirectX
+        CleanupDeviceD3D();
+        
         DestroyWindow(m_controlWindow);
         m_controlWindow = nullptr;
     }
@@ -428,29 +438,28 @@ LRESULT WINAPI DirectOverlayViewer::OverlayWndProc(HWND hWnd, UINT msg, WPARAM w
 }
 
 bool DirectOverlayViewer::CreateControlWindow() {
-    // Register control window class with dark styling
+    // Register control window class 
     WNDCLASSW wc = {};
     wc.lpfnWndProc = ControlWndProc;
     wc.hInstance = GetModuleHandle(nullptr);
     wc.lpszClassName = L"DirectOverlayControlWindow";
-    wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 32)); // Dark background similar to ImGui
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     
     if (!RegisterClassW(&wc)) {
         return false;
     }
     
-    // Create control window in top-right corner with improved size
-    int windowWidth = 220;
-    int windowHeight = 200;
+    // Create control window - resizable like streaming GUI
+    int windowWidth = 300;
+    int windowHeight = 320;
     int x = GetSystemMetrics(SM_CXSCREEN) - windowWidth - 20;
     int y = 20;
     
     m_controlWindow = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         L"DirectOverlayControlWindow",
-        L"Neuromorphic Overlay Controls",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        L"Overlay Controls",
+        WS_OVERLAPPEDWINDOW,  // Make it resizable like streaming
         x, y, windowWidth, windowHeight,
         nullptr, nullptr, GetModuleHandle(nullptr), this
     );
@@ -459,55 +468,38 @@ bool DirectOverlayViewer::CreateControlWindow() {
         return false;
     }
     
-    // Create labels with better styling
-    m_thresholdLabel = CreateWindowW(L"STATIC", L"Threshold: 15.0",
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        15, 15, 180, 20,
-        m_controlWindow, nullptr, GetModuleHandle(nullptr), nullptr);
+    // Initialize DirectX for ImGui
+    if (!CreateDeviceD3D(m_controlWindow)) {
+        std::cerr << "Failed to create DirectX device for overlay controls" << std::endl;
+        return false;
+    }
     
-    // Create threshold slider with better positioning
-    m_thresholdSlider = CreateWindowW(L"msctls_trackbar32", L"",
-        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | TBS_TOOLTIPS,
-        15, 35, 180, 30,
-        m_controlWindow, (HMENU)1001, GetModuleHandle(nullptr), nullptr);
+    // Initialize ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     
-    m_strideLabel = CreateWindowW(L"STATIC", L"Stride: 6",
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        15, 75, 180, 20,
-        m_controlWindow, nullptr, GetModuleHandle(nullptr), nullptr);
+    // Setup ImGui style - same as streaming
+    ImGui::StyleColorsDark();
     
-    // Create stride slider with better positioning  
-    m_strideSlider = CreateWindowW(L"msctls_trackbar32", L"",
-        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | TBS_TOOLTIPS,
-        15, 95, 180, 30,
-        m_controlWindow, (HMENU)1002, GetModuleHandle(nullptr), nullptr);
-    
-    m_maxEventsLabel = CreateWindowW(L"STATIC", L"Max Events: 1000K",
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        15, 135, 180, 20,
-        m_controlWindow, nullptr, GetModuleHandle(nullptr), nullptr);
-    
-    // Create max events slider  
-    m_maxEventsSlider = CreateWindowW(L"msctls_trackbar32", L"",
-        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | TBS_TOOLTIPS,
-        15, 155, 180, 30,
-        m_controlWindow, (HMENU)1003, GetModuleHandle(nullptr), nullptr);
-    
-    // Set slider ranges
-    SendMessage(m_thresholdSlider, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
-    SendMessage(m_thresholdSlider, TBM_SETPOS, TRUE, (LPARAM)m_threshold);
-    
-    SendMessage(m_strideSlider, TBM_SETRANGE, TRUE, MAKELONG(1, 12));
-    SendMessage(m_strideSlider, TBM_SETPOS, TRUE, (LPARAM)m_stride);
-    
-    SendMessage(m_maxEventsSlider, TBM_SETRANGE, TRUE, MAKELONG(1, 10000)); // Range 1-10000 (representing 1K-10000K events)
-    SendMessage(m_maxEventsSlider, TBM_SETPOS, TRUE, (LPARAM)(m_maxEvents / 1000));
+    // Setup Platform/Renderer backends
+    ImGui_ImplWin32_Init(m_controlWindow);
+    ImGui_ImplDX11_Init(m_d3dDevice, m_d3dDeviceContext);
     
     ShowWindow(m_controlWindow, SW_SHOW);
+    UpdateWindow(m_controlWindow);
+    
+    // Set up a timer to continuously redraw the ImGui window
+    SetTimer(m_controlWindow, 1, 16, nullptr); // ~60 FPS
+    
     return true;
 }
 
 LRESULT WINAPI DirectOverlayViewer::ControlWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+        return true;
+    
     DirectOverlayViewer* viewer = nullptr;
     
     if (msg == WM_CREATE) {
@@ -519,31 +511,40 @@ LRESULT WINAPI DirectOverlayViewer::ControlWndProc(HWND hWnd, UINT msg, WPARAM w
     }
     
     switch (msg) {
-    case WM_CTLCOLORSTATIC:
-        {
-            // Make static controls (labels) look like ImGui - white text on dark background
-            HDC hdcStatic = (HDC)wParam;
-            SetTextColor(hdcStatic, RGB(255, 255, 255)); // White text
-            SetBkColor(hdcStatic, RGB(32, 32, 32)); // Dark background
-            return (LRESULT)CreateSolidBrush(RGB(32, 32, 32));
-        }
-    case WM_HSCROLL:
+    case WM_TIMER:
+    case WM_PAINT:
         if (viewer) {
-            HWND control = (HWND)lParam;
-            LRESULT pos = SendMessage(control, TBM_GETPOS, 0, 0);
+            // Start ImGui frame
+            ImGui_ImplDX11_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
             
-            if (control == viewer->m_thresholdSlider) {
-                viewer->SetThreshold((float)pos);
-                viewer->UpdateSliderLabels();
-            } else if (control == viewer->m_strideSlider) {
-                viewer->SetStride((uint32_t)pos);
-                viewer->UpdateSliderLabels();
-            } else if (control == viewer->m_maxEventsSlider) {
-                viewer->SetMaxEvents((size_t)pos * 1000); // Convert from K to actual events
-                viewer->UpdateSliderLabels();
-            }
+            // Render control panel with same style as streaming
+            viewer->RenderControlPanel();
+            
+            // Rendering
+            ImGui::Render();
+            const float clear_color_with_alpha[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+            viewer->m_d3dDeviceContext->OMSetRenderTargets(1, &viewer->m_mainRenderTargetView, nullptr);
+            viewer->m_d3dDeviceContext->ClearRenderTargetView(viewer->m_mainRenderTargetView, clear_color_with_alpha);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            
+            viewer->m_swapChain->Present(1, 0);
         }
         return 0;
+        
+    case WM_SIZE:
+        if (viewer && viewer->m_d3dDevice && wParam != SIZE_MINIMIZED) {
+            viewer->CleanupRenderTarget();
+            viewer->m_swapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
+            viewer->CreateRenderTarget();
+        }
+        return 0;
+        
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+            return 0;
+        break;
         
     case WM_CLOSE:
         // When control window is closed, stop the entire overlay and application
@@ -557,26 +558,116 @@ LRESULT WINAPI DirectOverlayViewer::ControlWndProc(HWND hWnd, UINT msg, WPARAM w
     default:
         return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
+    
+    return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-void DirectOverlayViewer::UpdateSliderLabels() {
-    if (m_thresholdLabel) {
-        wchar_t buffer[50];
-        swprintf_s(buffer, L"Threshold: %.1f", m_threshold);
-        SetWindowTextW(m_thresholdLabel, buffer);
-    }
+void DirectOverlayViewer::RenderControlPanel() {
+    // Full window ImGui rendering - exactly like streaming controls
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size);
     
-    if (m_strideLabel) {
-        wchar_t buffer[50];
-        swprintf_s(buffer, L"Stride: %u", m_stride);
-        SetWindowTextW(m_strideLabel, buffer);
+    if (ImGui::Begin("Overlay Controls", &m_showControls, 
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | 
+                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar)) {
+        
+        // Overlay status - equivalent to streaming status
+        ImVec4 statusColor = IsRunning() ? 
+            ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+        const char* status = IsRunning() ? "OVERLAY ACTIVE" : "STOPPED";
+        
+        ImGui::TextColored(statusColor, "Status: %s", status);
+        
+        ImGui::Separator();
+        
+        // Visualization options - same as streaming
+        ImGui::Text("Visualization:");
+        if (ImGui::Checkbox("Enable Dimming", &m_useDimming)) {
+            SetDimmingEnabled(m_useDimming);
+        }
+        
+        if (m_useDimming) {
+            if (ImGui::SliderFloat("Dimming Rate", &m_dimmingRate, 0.1f, 3.0f, "%.1fx")) {
+                SetDimmingRate(m_dimmingRate);
+            }
+        }
+        
+        ImGui::Separator();
+        
+        // Capture parameters - identical to streaming controls
+        ImGui::Text("Capture Parameters:");
+        
+        if (ImGui::SliderFloat("Threshold", &m_threshold, 0.0f, 100.0f, "%.1f")) {
+            SetThreshold(m_threshold);
+        }
+        
+        int stride = static_cast<int>(m_stride);
+        if (ImGui::SliderInt("Stride", &stride, 1, 30)) {
+            SetStride(static_cast<uint32_t>(stride));
+        }
+        
+        int maxEvents = static_cast<int>(m_maxEvents);
+        if (ImGui::SliderInt("Max Events", &maxEvents, 1000, 100000)) {
+            SetMaxEvents(static_cast<size_t>(maxEvents));
+        }
+        
+        ImGui::Separator();
+        
+        // Additional overlay info
+        ImGui::Text("Overlay Mode: Direct Screen");
+        ImGui::TextWrapped("Events are displayed directly on your screen as colored dots.");
     }
-    
-    if (m_maxEventsLabel) {
-        wchar_t buffer[50];
-        swprintf_s(buffer, L"Max Events: %zuK", m_maxEvents / 1000);
-        SetWindowTextW(m_maxEventsLabel, buffer);
+    ImGui::End();
+}
+
+// DirectX implementation methods
+bool DirectOverlayViewer::CreateDeviceD3D(HWND hWnd) {
+    // Simplified DirectX 11 setup - same as streaming viewer
+    DXGI_SWAP_CHAIN_DESC sd;
+    ZeroMemory(&sd, sizeof(sd));
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = 0;
+    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = hWnd;
+    sd.SampleDesc.Count = 1;
+    sd.SampleDesc.Quality = 0;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createDeviceFlags = 0;
+    D3D_FEATURE_LEVEL featureLevel;
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
+    HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_swapChain, &m_d3dDevice, &featureLevel, &m_d3dDeviceContext);
+    if (res == DXGI_ERROR_UNSUPPORTED) {
+        res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_swapChain, &m_d3dDevice, &featureLevel, &m_d3dDeviceContext);
     }
+    if (res != S_OK) return false;
+
+    CreateRenderTarget();
+    return true;
+}
+
+void DirectOverlayViewer::CleanupDeviceD3D() {
+    CleanupRenderTarget();
+    if (m_swapChain) { m_swapChain->Release(); m_swapChain = nullptr; }
+    if (m_d3dDeviceContext) { m_d3dDeviceContext->Release(); m_d3dDeviceContext = nullptr; }
+    if (m_d3dDevice) { m_d3dDevice->Release(); m_d3dDevice = nullptr; }
+}
+
+void DirectOverlayViewer::CreateRenderTarget() {
+    ID3D11Texture2D* pBackBuffer;
+    m_swapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    m_d3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &m_mainRenderTargetView);
+    pBackBuffer->Release();
+}
+
+void DirectOverlayViewer::CleanupRenderTarget() {
+    if (m_mainRenderTargetView) { m_mainRenderTargetView->Release(); m_mainRenderTargetView = nullptr; }
 }
 
 } // namespace neuromorphic

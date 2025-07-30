@@ -87,7 +87,7 @@ void ScreenCapture::StopCapture() {
     std::cout << "Screen capture stopped" << std::endl;
 }
 
-bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride) {
+bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents) {
     if (!m_captureActive || !m_initialized) {
         return false;
     }
@@ -98,7 +98,7 @@ bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp, float 
     }
     
     // Generate events from pixel differences with dynamic parameters
-    GenerateEventsFromFrame(events, timestamp, threshold, stride);
+    GenerateEventsFromFrame(events, timestamp, threshold, stride, maxEvents);
     
     return true;
 }
@@ -295,7 +295,7 @@ bool ScreenCapture::CaptureFrameBitPacked(BitPackedEventFrame& frame, uint64_t t
     return true;
 }
 
-void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride) {
+void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents) {
     // Skip first frame (no previous frame to compare against)
     if (m_firstFrame) {
         // Copy current frame to previous frame buffer for next comparison (fast copy)
@@ -305,17 +305,17 @@ void ScreenCapture::GenerateEventsFromFrame(EventStream& events, uint64_t timest
     }
     
     // Compare pixels between current and previous frames
-    ComparePixels(events, timestamp, threshold, stride);
+    ComparePixels(events, timestamp, threshold, stride, maxEvents);
     
     // Copy current frame to previous frame buffer for next comparison (simple memcpy is often faster)
     memcpy(m_previousFrameBuffer, m_currentFrameBuffer, m_frameBufferSize);
 }
 
-void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride) {
+void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents) {
     // Use pixel-by-pixel comparison for accurate DVS-style event generation
     // Generate events only for pixels that actually changed significantly
     
-    const uint32_t maxEventsPerFrame = 10000; // Much smaller for testing
+    const size_t maxEventsPerFrame = maxEvents; // Use the provided max events parameter
     // Use the provided threshold and stride parameters instead of hardcoded values
     
     // Simple approach - no complex parallelization

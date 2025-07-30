@@ -73,7 +73,7 @@ void StreamingApp::captureLoop() {
         uint64_t currentTime = HighResTimer::GetMicroseconds();
         
         // Capture frame and generate events with current parameters
-        if (m_capture.CaptureFrame(m_eventStream, currentTime, m_threshold, m_stride)) {
+        if (m_capture.CaptureFrame(m_eventStream, currentTime, m_threshold, m_stride, m_maxEvents)) {
             // Events are automatically added to m_eventStream
         }
         

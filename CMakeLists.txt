@@ -141,20 +141,30 @@ if(WIN32)
     endif()
 endif()
 
-# Create Direct Overlay application executable (doesn't need ImGui)
-add_executable(neuromorphic_screens_overlay ${OVERLAY_SOURCES})
-
-# Link libraries for overlay application
-target_link_libraries(neuromorphic_screens_overlay
-    d3d11
-    dxgi
-    d3dcompiler
-    d2d1
-    dwrite
-    dwmapi
-    OpenMP::OpenMP_CXX
-    user32 gdi32 shell32 ole32 uuid comctl32 advapi32
-)
+# Create Direct Overlay application executable (now needs ImGui for controls)
+if(WIN32 AND EXISTS "${IMGUI_DIR}/imgui.cpp")
+    add_executable(neuromorphic_screens_overlay ${OVERLAY_SOURCES} ${IMGUI_SOURCES})
+    
+    # Include ImGui directories for overlay
+    target_include_directories(neuromorphic_screens_overlay PRIVATE 
+        "${IMGUI_DIR}"
+        "${IMGUI_DIR}/backends"
+    )
+    
+    # Link libraries for overlay application
+    target_link_libraries(neuromorphic_screens_overlay
+        d3d11
+        dxgi
+        d3dcompiler
+        d2d1
+        dwrite
+        dwmapi
+        OpenMP::OpenMP_CXX
+        user32 gdi32 shell32 ole32 uuid comctl32 advapi32
+    )
+else()
+    message(WARNING "Cannot build overlay application without ImGui")
+endif()
 
 # Summary of what will be built
 message(STATUS "========== Build Summary ==========")

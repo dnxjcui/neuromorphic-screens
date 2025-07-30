@@ -5,19 +5,22 @@
 <img src="docs/media/happy.gif" width="500" height="200" alt="Happy Demo" style="display: inline-block; margin-right: 10px;">
 <img src="docs/media/happy_original.gif" width="300" height="200" alt="Happy Original" style="display: inline-block;">
 
-A real-time event-based screen capture system that converts screen changes into neuromorphic events, inspired by Dynamic Vision Sensors (DVS). This system captures pixel-level changes as asynchronous, timestamped events and provides advanced visualization with professional ImGui interface, dimming effects, and export capabilities.
+A real-time event-based screen capture system that converts screen changes into neuromorphic events, inspired by Dynamic Vision Sensors (DVS). This system captures pixel-level changes as asynchronous, timestamped events and provides advanced visualization with professional ImGui interface, direct overlay mode, streaming capabilities, and configurable parameters.
 
 ## Features
 
 - **Real Screen Capture**: Desktop Duplication API integration for actual screen capture  
-- **Multi-Format Storage**: CSV, binary (.evt), and space-separated text formats
+- **Multi-Format Storage**: CSV, binary (.evt), AEDAT, and space-separated text formats
 - **rpg_dvs_ros Compatibility**: Space-separated format compatible with ROS DVS packages
 - **Advanced ImGui Visualization**: DirectX 11-based interface with stable, segfault-free operation
+- **Direct Overlay Mode**: Events displayed directly on your screen as colored dots (green=positive, red=negative)
+- **Real-Time Streaming**: Live event capture and visualization with configurable parameters
 - **Professional Export**: FFmpeg integration for GIF and MP4 video export
 - **Event-Based Timing**: True event-based visualization - all events at same timestamp display simultaneously
 - **Pixel Dimming Effects**: Configurable dimming for previous pixels instead of immediate removal
 - **High-Performance**: 60 FPS rendering with hardware acceleration and OpenMP parallelization
-- **Interactive Controls**: Play/Pause/Stop, speed control (0.01x-5.0x), and real-time statistics
+- **Interactive Controls**: Play/Pause/Stop, speed control (0.01x-5.0x), threshold/stride/max events adjustment, and real-time statistics
+- **Resizable GUI**: All control windows are fully resizable with professional layouts
 
 ## Quick Start
 
@@ -46,6 +49,16 @@ cmake --build . --config Release
 ./neuromorphic_screens_imgui.exe --input recording.evt
 ```
 
+**Real-time streaming with live visualization:**
+```bash
+./neuromorphic_screens_streaming.exe --save recording.aedat --format aedat
+```
+
+**Direct overlay mode (events on screen):**
+```bash
+./neuromorphic_screens_overlay.exe --save overlay_capture.aedat --format aedat
+```
+
 **CLI statistics:**
 ```bash
 ./neuromorphic_screens.exe --replay --input recording.evt
@@ -62,7 +75,34 @@ cmake --build . --config Release
 
 # Launch ImGui GUI (recommended)
 ./neuromorphic_screens_imgui.exe --input <file>
+
+# Real-time streaming mode
+./neuromorphic_screens_streaming.exe [--save <file>] [--format <aedat|csv>]
+
+# Direct overlay mode
+./neuromorphic_screens_overlay.exe [--save <file>] [--format <aedat|csv|space>] [--dimming <rate>] [--no-dimming]
 ```
+
+## Application Modes
+
+### 1. ImGui Visualization (`neuromorphic_screens_imgui.exe`)
+- Professional DirectX 11 interface with video-like playback
+- Interactive controls: Play/Pause/Stop, speed control, progress seeking
+- Export to GIF and MP4 with FFmpeg integration
+- Real-time statistics and event analysis
+
+### 2. Real-Time Streaming (`neuromorphic_screens_streaming.exe`)  
+- Live event capture and visualization in a resizable window
+- **Configurable Parameters**: Threshold (0-100), Stride (1-30), Max Events (1000-100000)
+- Real-time parameter adjustment with immediate visual feedback
+- Optional event saving to file while streaming
+
+### 3. Direct Overlay Mode (`neuromorphic_screens_overlay.exe`)
+- Events displayed directly on your screen as colored dots
+- **Green dots** = positive events (brightness increase)
+- **Red dots** = negative events (brightness decrease)  
+- Resizable control window with same parameters as streaming mode
+- Perfect for monitoring screen activity in real-time
 
 ## File Formats
 

@@ -347,13 +347,13 @@ void ImGuiStreamingViewer::RenderControlPanel() {
         }
         
         int stride = static_cast<int>(m_streamingApp.getStride());
-        if (ImGui::SliderInt("Stride", &stride, 1, 12)) {
+        if (ImGui::SliderInt("Stride", &stride, 1, 30)) {
             m_streamingApp.setStride(static_cast<uint32_t>(stride));
         }
         
-        int maxEvents = static_cast<int>(m_streamingApp.getMaxEvents() / 1000); // Display in thousands
-        if (ImGui::SliderInt("Max Events (K)", &maxEvents, 1, 10000)) {
-            m_streamingApp.setMaxEvents(static_cast<size_t>(maxEvents) * 1000);
+        int maxEvents = static_cast<int>(m_streamingApp.getMaxEvents());
+        if (ImGui::SliderInt("Max Events", &maxEvents, 1000, 100000)) {
+            m_streamingApp.setMaxEvents(static_cast<size_t>(maxEvents));
         }
         
         ImGui::Separator();
