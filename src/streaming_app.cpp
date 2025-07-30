@@ -4,7 +4,7 @@
 namespace neuromorphic {
 
 StreamingApp::StreamingApp() : m_isRunning(false), m_saveFormat(EventFileFormat::BINARY_AEDAT), 
-    m_threshold(15.0f), m_stride(1) {} // Default values for streaming: threshold=15.0, stride=1
+    m_threshold(15.0f), m_stride(1), m_maxEvents(constants::MAX_EVENT_CONTEXT_WINDOW) {} // Default values for streaming: threshold=15.0, stride=1, maxEvents=1000000
 
 void StreamingApp::setSaveOptions(const std::string& filename, EventFileFormat format) {
     m_saveFilename = filename;
@@ -20,6 +20,7 @@ bool StreamingApp::initialize() {
     m_eventStream.width = m_capture.GetWidth();
     m_eventStream.height = m_capture.GetHeight();
     m_eventStream.start_time = HighResTimer::GetMicroseconds();
+    m_eventStream.max_events = m_maxEvents; // Set max events from parameter
     
     return true;
 }

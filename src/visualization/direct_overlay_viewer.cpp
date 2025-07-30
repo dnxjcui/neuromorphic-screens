@@ -20,9 +20,9 @@ DirectOverlayViewer::DirectOverlayViewer(StreamingApp& streamingApp) :
     m_threadRunning(false), m_overlayWindow(nullptr),
     m_screenWidth(0), m_screenHeight(0),
     m_useDimming(false), m_dimmingRate(1.0f),
-    m_threshold(15.0f), m_stride(6),  // Default values for overlay: threshold=15.0, stride=6
-    m_controlWindow(nullptr), m_thresholdSlider(nullptr), m_strideSlider(nullptr),
-    m_thresholdLabel(nullptr), m_strideLabel(nullptr) {
+    m_threshold(15.0f), m_stride(6), m_maxEvents(constants::MAX_EVENT_CONTEXT_WINDOW),  // Default values for overlay: threshold=15.0, stride=6, maxEvents=1000000
+    m_controlWindow(nullptr), m_thresholdSlider(nullptr), m_strideSlider(nullptr), m_maxEventsSlider(nullptr),
+    m_thresholdLabel(nullptr), m_strideLabel(nullptr), m_maxEventsLabel(nullptr) {
 }
 
 DirectOverlayViewer::~DirectOverlayViewer() {
@@ -217,6 +217,7 @@ void DirectOverlayViewer::RenderThreadFunction() {
         // Update streaming app parameters with current overlay settings
         m_streamingApp.setThreshold(m_threshold);
         m_streamingApp.setStride(m_stride);
+        m_streamingApp.setMaxEvents(m_maxEvents);
         
         // Get latest events from streaming app
         const EventStream& stream = m_streamingApp.getEventStream();
@@ -238,8 +239,8 @@ void DirectOverlayViewer::RenderThreadFunction() {
                     uint64_t eventAbsoluteTime = stream.start_time + event.timestamp;
                     uint64_t eventAge = currentTime - eventAbsoluteTime;
                     
-                    // Apply event detection logic similar to implementation guide
-                    if (eventAge <= recentThreshold && event.polarity != 0) {
+                    // Apply event detection logic similar to implementation guide - show both positive (polarity=1) and negative (polarity=0) events
+                    if (eventAge <= recentThreshold) {
                         m_activeDots.push_back({event, 1.0f});
                     }
                 }
@@ -441,7 +442,7 @@ bool DirectOverlayViewer::CreateControlWindow() {
     
     // Create control window in top-right corner with improved size
     int windowWidth = 220;
-    int windowHeight = 140;
+    int windowHeight = 200;
     int x = GetSystemMetrics(SM_CXSCREEN) - windowWidth - 20;
     int y = 20;
     
@@ -481,12 +482,26 @@ bool DirectOverlayViewer::CreateControlWindow() {
         15, 95, 180, 30,
         m_controlWindow, (HMENU)1002, GetModuleHandle(nullptr), nullptr);
     
+    m_maxEventsLabel = CreateWindowW(L"STATIC", L"Max Events: 1000K",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        15, 135, 180, 20,
+        m_controlWindow, nullptr, GetModuleHandle(nullptr), nullptr);
+    
+    // Create max events slider  
+    m_maxEventsSlider = CreateWindowW(L"msctls_trackbar32", L"",
+        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | TBS_TOOLTIPS,
+        15, 155, 180, 30,
+        m_controlWindow, (HMENU)1003, GetModuleHandle(nullptr), nullptr);
+    
     // Set slider ranges
     SendMessage(m_thresholdSlider, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
     SendMessage(m_thresholdSlider, TBM_SETPOS, TRUE, (LPARAM)m_threshold);
     
     SendMessage(m_strideSlider, TBM_SETRANGE, TRUE, MAKELONG(1, 12));
     SendMessage(m_strideSlider, TBM_SETPOS, TRUE, (LPARAM)m_stride);
+    
+    SendMessage(m_maxEventsSlider, TBM_SETRANGE, TRUE, MAKELONG(1, 10000)); // Range 1-10000 (representing 1K-10000K events)
+    SendMessage(m_maxEventsSlider, TBM_SETPOS, TRUE, (LPARAM)(m_maxEvents / 1000));
     
     ShowWindow(m_controlWindow, SW_SHOW);
     return true;
@@ -515,13 +530,16 @@ LRESULT WINAPI DirectOverlayViewer::ControlWndProc(HWND hWnd, UINT msg, WPARAM w
     case WM_HSCROLL:
         if (viewer) {
             HWND control = (HWND)lParam;
-            int pos = SendMessage(control, TBM_GETPOS, 0, 0);
+            LRESULT pos = SendMessage(control, TBM_GETPOS, 0, 0);
             
             if (control == viewer->m_thresholdSlider) {
                 viewer->SetThreshold((float)pos);
                 viewer->UpdateSliderLabels();
             } else if (control == viewer->m_strideSlider) {
                 viewer->SetStride((uint32_t)pos);
+                viewer->UpdateSliderLabels();
+            } else if (control == viewer->m_maxEventsSlider) {
+                viewer->SetMaxEvents((size_t)pos * 1000); // Convert from K to actual events
                 viewer->UpdateSliderLabels();
             }
         }
@@ -552,6 +570,12 @@ void DirectOverlayViewer::UpdateSliderLabels() {
         wchar_t buffer[50];
         swprintf_s(buffer, L"Stride: %u", m_stride);
         SetWindowTextW(m_strideLabel, buffer);
+    }
+    
+    if (m_maxEventsLabel) {
+        wchar_t buffer[50];
+        swprintf_s(buffer, L"Max Events: %zuK", m_maxEvents / 1000);
+        SetWindowTextW(m_maxEventsLabel, buffer);
     }
 }
 

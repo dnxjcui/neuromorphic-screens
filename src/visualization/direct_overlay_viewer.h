@@ -66,13 +66,16 @@ private:
     // Event capture parameters
     float m_threshold;  // Event threshold (0-100)
     uint32_t m_stride;  // Pixel stride (1-12)
+    size_t m_maxEvents; // Maximum events in context window
     
     // Control GUI
     HWND m_controlWindow;
     HWND m_thresholdSlider;
     HWND m_strideSlider;
+    HWND m_maxEventsSlider;
     HWND m_thresholdLabel;
     HWND m_strideLabel;
+    HWND m_maxEventsLabel;
     
 public:
     DirectOverlayViewer(StreamingApp& streamingApp);
@@ -91,8 +94,10 @@ public:
     // Event capture parameters
     void SetThreshold(float threshold) { m_threshold = (std::max)(0.0f, (std::min)(100.0f, threshold)); }
     void SetStride(uint32_t stride) { m_stride = (std::max)(1u, (std::min)(12u, stride)); }
+    void SetMaxEvents(size_t maxEvents) { m_maxEvents = (std::max)(static_cast<size_t>(1000), (std::min)(static_cast<size_t>(10000000), maxEvents)); }
     float GetThreshold() const { return m_threshold; }
     uint32_t GetStride() const { return m_stride; }
+    size_t GetMaxEvents() const { return m_maxEvents; }
     
     bool IsRunning() const { return m_threadRunning.load(); }
     

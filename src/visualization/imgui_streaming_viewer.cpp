@@ -312,7 +312,7 @@ void ImGuiStreamingViewer::RenderEventCanvas() {
 
 void ImGuiStreamingViewer::RenderControlPanel() {
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Size.x * 0.75f + 10, 50));
-    ImGui::SetNextWindowSize(ImVec2(300, 200));
+    ImGui::SetNextWindowSize(ImVec2(300, 320));
     
     if (ImGui::Begin("Streaming Controls", &m_showControls, ImGuiWindowFlags_NoResize)) {
         // Streaming status
@@ -334,6 +334,26 @@ void ImGuiStreamingViewer::RenderControlPanel() {
             if (ImGui::SliderFloat("Dimming Rate", &m_dimmingRate, 0.1f, 3.0f, "%.1fx")) {
                 SetDimmingRate(m_dimmingRate);
             }
+        }
+        
+        ImGui::Separator();
+        
+        // Capture parameters
+        ImGui::Text("Capture Parameters:");
+        
+        float threshold = m_streamingApp.getThreshold();
+        if (ImGui::SliderFloat("Threshold", &threshold, 0.0f, 100.0f, "%.1f")) {
+            m_streamingApp.setThreshold(threshold);
+        }
+        
+        int stride = static_cast<int>(m_streamingApp.getStride());
+        if (ImGui::SliderInt("Stride", &stride, 1, 12)) {
+            m_streamingApp.setStride(static_cast<uint32_t>(stride));
+        }
+        
+        int maxEvents = static_cast<int>(m_streamingApp.getMaxEvents() / 1000); // Display in thousands
+        if (ImGui::SliderInt("Max Events (K)", &maxEvents, 1, 10000)) {
+            m_streamingApp.setMaxEvents(static_cast<size_t>(maxEvents) * 1000);
         }
         
         ImGui::Separator();

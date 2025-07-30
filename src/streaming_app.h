@@ -26,6 +26,7 @@ private:
     // Capture parameters
     float m_threshold;
     uint32_t m_stride;
+    size_t m_maxEvents;
     
 public:
     StreamingApp();
@@ -41,8 +42,10 @@ public:
     // Parameter control
     void setThreshold(float threshold) { m_threshold = (std::max)(0.0f, (std::min)(100.0f, threshold)); }
     void setStride(uint32_t stride) { m_stride = (std::max)(1u, (std::min)(12u, stride)); }
+    void setMaxEvents(size_t maxEvents) { m_maxEvents = (std::max)(static_cast<size_t>(1000), (std::min)(static_cast<size_t>(10000000), maxEvents)); m_eventStream.max_events = m_maxEvents; }
     float getThreshold() const { return m_threshold; }
     uint32_t getStride() const { return m_stride; }
+    size_t getMaxEvents() const { return m_maxEvents; }
     
 private:
     void captureLoop();
