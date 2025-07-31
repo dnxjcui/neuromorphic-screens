@@ -213,7 +213,7 @@ bool DirectOverlayViewer::CreateBrushes() {
 }
 
 void DirectOverlayViewer::RenderThreadFunction() {
-    FrameRateLimiter limiter(30.0f); // Lower frame rate for stability
+    FrameRateLimiter limiter(60.0f); // Lower frame rate for stability
     
     while (m_threadRunning.load()) {
         // Update streaming app parameters with current overlay settings

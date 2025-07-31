@@ -166,9 +166,25 @@ else()
     message(WARNING "Cannot build overlay application without ImGui")
 endif()
 
+# Add benchmark executable
+add_executable(benchmark_parallelization benchmark_parallelization.cpp src/core/timing.cpp)
+
+# Link libraries for benchmark
+target_link_libraries(benchmark_parallelization
+    OpenMP::OpenMP_CXX
+)
+
+# Windows-specific libraries
+if(WIN32)
+    target_link_libraries(benchmark_parallelization
+        user32 gdi32 shell32 ole32 uuid comctl32 advapi32
+    )
+endif()
+
 # Summary of what will be built
 message(STATUS "========== Build Summary ==========")
 message(STATUS "CLI Application: neuromorphic_screens")
+message(STATUS "Benchmark Application: benchmark_parallelization")
 message(STATUS "Overlay Application: neuromorphic_screens_overlay")
 if(WIN32 AND EXISTS "${IMGUI_DIR}/imgui.cpp")
     message(STATUS "ImGui GUI Application: neuromorphic_screens_imgui")
