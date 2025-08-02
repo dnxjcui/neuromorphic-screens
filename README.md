@@ -1,9 +1,10 @@
 # Neuromorphic Screens
 
 ![Maxwell Demo](docs/media/maxwell.gif)
+![Bernstein Demo](docs/media/bernstein.gif)
 
-<img src="docs/media/happy.gif" width="500" height="200" alt="Happy Demo" style="display: inline-block; margin-right: 10px;">
-<img src="docs/media/happy_original.gif" width="300" height="200" alt="Happy Original" style="display: inline-block;">
+<!-- <img src="docs/media/happy.gif" width="400" height="200" alt="Happy Demo" style="display: inline-block; margin-right: 10px;"> -->
+<!-- <img src="docs/media/happy_original.gif" width="200" height="200" alt="Happy Original" style="display: inline-block;"> -->
 
 A real-time event-based screen capture system that converts screen changes into neuromorphic events, inspired by Dynamic Vision Sensors (DVS). This system captures pixel-level changes as asynchronous, timestamped events and provides advanced visualization with professional ImGui interface, direct overlay mode, streaming capabilities, and configurable parameters.
 
