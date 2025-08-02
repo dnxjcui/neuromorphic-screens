@@ -128,8 +128,7 @@ cmake --build . --config Release
 
 ## License
 
-MIT License - See LICENSE file for details.
-
+Apache 2.0 License - See LICENSE file for details.
 ## Performance Architecture
 
 The system now employs a sophisticated performance optimization stack:
@@ -147,3 +146,100 @@ The system now employs a sophisticated performance optimization stack:
 - **Adaptive Scaling**: Automatically handles varying event densities
 
 The ImGui implementation provides a stable, professional visualization platform that eliminates all previous stability issues while delivering superior performance and user experience with **20-1500x performance improvements** for high event rate scenarios.
+
+## Project Structure
+
+```
+neuromorphic_screens/
+├── CMakeLists.txt              # Build configuration with 4 executable targets
+├── LICENSE                     # Apache 2.0 license
+├── README.md                   # This documentation file
+├── REPORT.md                   # Comprehensive technical report
+├── imgui.ini                   # ImGui window layout configuration
+├── benchmark_parallelization.cpp  # OpenMP performance benchmarking tool
+├── build_benchmark.bat         # Windows script to build and run benchmarks
+│
+├── data/                       # Directory for captured event files
+│
+├── docs/                       # Documentation and media assets
+│   └── media/                  # Demo GIFs and visualizations
+│       ├── bernstein.gif       # Demonstration recording
+│       ├── maxwell.gif         # Demonstration recording
+│       ├── happy.gif           # Demonstration recording
+│       └── happy_original.gif  # Original comparison recording
+│
+└── src/                        # Source code organized by functionality
+    ├── main.cpp                # CLI application for capture/replay with statistics
+    ├── main_imgui.cpp          # ImGui GUI application entry point
+    ├── main_streaming.cpp      # Real-time streaming application entry point
+    ├── main_overlay.cpp        # Direct screen overlay application entry point
+    ├── streaming_app.cpp       # Shared streaming application logic
+    ├── streaming_app.h         # Streaming application interface and configuration
+    │
+    ├── capture/                # Screen capture system using Desktop Duplication API
+    │   ├── screen_capture.cpp  # DirectX 11 screen capture implementation
+    │   └── screen_capture.h    # Screen capture interface and pixel processing
+    │
+    ├── core/                   # Core data structures and algorithms
+    │   ├── event_types.h       # Event data structures, EventStream, and constants
+    │   ├── event_file.cpp      # Event file I/O operations
+    │   ├── event_file.h        # Event file interface
+    │   ├── event_file_formats.cpp  # Multi-format event file serialization
+    │   ├── event_file_formats.h    # File format definitions (AEDAT, CSV, space-separated)
+    │   ├── temporal_index.h    # High-performance temporal event indexing with O(k) access
+    │   ├── timing.cpp          # High-resolution timing implementation
+    │   └── timing.h            # Microsecond precision timing utilities
+    │
+    └── visualization/          # Event visualization and GUI components
+        ├── imgui_event_viewer.cpp   # Professional event viewer with playback controls
+        ├── imgui_event_viewer.h     # Video-like interface with export capabilities
+        ├── imgui_streaming_viewer.cpp  # Real-time streaming visualization window
+        ├── imgui_streaming_viewer.h    # Live event display with parameter controls
+        ├── direct_overlay_viewer.cpp   # Screen overlay rendering engine
+        └── direct_overlay_viewer.h    # Direct screen event visualization
+```
+
+### Core Components
+
+#### **Executables** (4 Applications)
+- **`neuromorphic_screens.exe`** - CLI application for event capture and replay with detailed statistics
+- **`neuromorphic_screens_imgui.exe`** - Professional ImGui GUI with video-like playback controls and export features
+- **`neuromorphic_screens_streaming.exe`** - Real-time event streaming with live visualization and parameter adjustment
+- **`neuromorphic_screens_overlay.exe`** - Direct screen overlay mode displaying events as colored dots on your desktop
+
+#### **Screen Capture System** (`src/capture/`)
+- **`screen_capture.cpp/.h`** - Desktop Duplication API implementation with OpenMP parallelization for high-performance pixel-by-pixel change detection, supporting configurable thresholds and stride patterns
+
+#### **Core Event System** (`src/core/`)
+- **`event_types.h`** - Fundamental neuromorphic event data structures including Event, EventStream, and system constants
+- **`event_file.cpp/.h`** - Core event file I/O operations with buffering and error handling
+- **`event_file_formats.cpp/.h`** - Multi-format serialization supporting AEDAT binary, CSV, and space-separated text formats
+- **`temporal_index.h`** - High-performance temporal indexing with O(k) recent event access, eliminating O(n) linear scanning bottlenecks
+- **`timing.cpp/.h`** - Microsecond precision timing utilities with frame rate limiting and high-resolution timestamp generation
+
+#### **Visualization Engines** (`src/visualization/`)
+- **`imgui_event_viewer.cpp/.h`** - Professional DirectX 11-based event viewer with video-like playback controls, progress seeking, speed adjustment, and GIF/MP4 export capabilities
+- **`imgui_streaming_viewer.cpp/.h`** - Real-time streaming visualization with configurable parameters (threshold, stride, max events) and live performance monitoring
+- **`direct_overlay_viewer.cpp/.h`** - Direct screen overlay rendering engine using layered windows with efficient dirty region tracking and GDI-based dot rendering
+
+#### **Application Architecture** (`src/`)
+- **`streaming_app.cpp/.h`** - Shared streaming application logic with thread-safe event capture, configurable parameters, and optional file saving
+- **`main_*.cpp`** - Application entry points for each of the four distinct usage modes (CLI, GUI, streaming, overlay)
+
+#### **Performance Tools**
+- **`benchmark_parallelization.cpp`** - OpenMP benchmarking tool for testing pixel processing performance with serial vs parallel implementations
+- **`build_benchmark.bat`** - Windows build script for performance testing
+
+### File Formats Supported
+
+- **Binary (.evt/.aedat)**: High-performance AEDAT binary format for large datasets
+- **CSV (.csv)**: Human-readable comma-separated format with headers
+- **Space-separated (.txt)**: rpg_dvs_ros compatible format for ROS integration
+
+### Performance Optimizations
+
+- **TemporalEventIndex**: Ring buffer with O(k) recent event access
+- **Event Deduplication**: Unique event ID system preventing duplicate processing  
+- **Dirty Region Tracking**: Selective rendering for minimal memory bandwidth usage
+- **OpenMP Parallelization**: Multi-threaded pixel processing for real-time capture
+- **Mutex-Protected Threading**: Thread-safe data structures with lock-free optimizations
