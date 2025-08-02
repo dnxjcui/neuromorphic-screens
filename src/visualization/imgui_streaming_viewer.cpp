@@ -17,7 +17,8 @@ ImGuiStreamingViewer::ImGuiStreamingViewer(const std::string& title, StreamingAp
       m_streamingApp(streamingApp),
       m_canvasWidth(800), m_canvasHeight(600),
       m_threadRunning(false), m_showStats(true), m_showControls(true),
-      m_useDimming(true), m_dimmingRate(1.0f) {
+      m_useDimming(true), m_dimmingRate(1.0f),
+      m_temporalIndex(100000, 10000) {  // 100ms time window, max 10000 recent events
     ZeroMemory(&m_wc, sizeof(m_wc));
 }
 
@@ -179,27 +180,43 @@ void ImGuiStreamingViewer::VisualizationThreadFunction() {
     FrameRateLimiter limiter(60.0f);
     
     while (m_threadRunning) {
-        // Get latest events from streaming app
+        uint64_t currentTime = HighResTimer::GetMicroseconds();
         const EventStream& stream = m_streamingApp.getEventStream();
         
-        // Add new events to active dots (simplified - add recent events)
+        // High-performance recent event processing using temporal index
         if (stream.size() > 0) {
-            uint64_t currentTime = HighResTimer::GetMicroseconds();
-            uint64_t recentThreshold = 100000; // 100ms
+            // Update temporal index with latest events (O(k) where k = new events)
+            m_temporalIndex.updateFromStream(stream, currentTime);
             
-            // Get thread-safe copy of events for visualization
-            auto eventsCopy = stream.getEventsCopy();
+            // Get recent events efficiently (O(k) where k = recent events, not total events)
+            auto recentEvents = m_temporalIndex.getRecentEvents(currentTime);
             
-            // Add events from the last 100ms to visualization
-            for (const auto& event : eventsCopy) {
-                uint64_t eventAge = currentTime - (stream.start_time + event.timestamp);
-                if (eventAge <= recentThreshold) {
-                    AddDot(event);
+            // Replace the old O(n) AddDot calls with batch processing
+            {
+                std::lock_guard<std::mutex> lock(m_activeDotsLock);
+                
+                // Clear old dots and replace with current recent events
+                m_activeDots.clear();
+                m_activeDots.reserve(recentEvents.size());
+                
+                for (const auto& event : recentEvents) {
+                    m_activeDots.push_back(std::make_pair(event, constants::DOT_FADE_DURATION));
                 }
+            }
+            
+            // Debug output with performance stats
+            static int frameCount = 0;
+            if (frameCount++ % 60 == 0 && !recentEvents.empty()) {
+                size_t totalProcessed, duplicatesSkipped, bufferSize;
+                m_temporalIndex.getPerformanceStats(totalProcessed, duplicatesSkipped, bufferSize);
+                std::cout << "\nStreaming GUI: " << recentEvents.size() << " active dots, "
+                         << "buffer: " << bufferSize << ", "
+                         << "processed: " << totalProcessed << ", "
+                         << "duplicates: " << duplicatesSkipped;
             }
         }
         
-        // Update active dots (dimming)
+        // Update active dots (dimming) - now much smaller set to process
         UpdateActiveDots();
         
         limiter.WaitForNextFrame();
@@ -207,6 +224,8 @@ void ImGuiStreamingViewer::VisualizationThreadFunction() {
 }
 
 void ImGuiStreamingViewer::AddDot(const Event& event) {
+    // This method is now primarily for compatibility
+    // Main event processing now uses batch updates in VisualizationThreadFunction
     std::lock_guard<std::mutex> lock(m_activeDotsLock);
     m_activeDots.push_back(std::make_pair(event, constants::DOT_FADE_DURATION));
 }

@@ -2,6 +2,7 @@
 
 #include "../streaming_app.h"
 #include "../core/timing.h"
+#include "../core/temporal_index.h"
 #include <atomic>
 #include <thread>
 #include <mutex>
@@ -63,6 +64,47 @@ private:
     };
     std::vector<OverlayDot> m_activeDots;
     mutable std::mutex m_activeDotsLock;
+    
+    // High-performance temporal indexing for recent events
+    TemporalEventIndex m_temporalIndex;
+    
+    // Dirty region tracking for efficient rendering
+    struct DirtyRegion {
+        int minX, minY, maxX, maxY;
+        bool isDirty;
+        
+        DirtyRegion() : minX(INT_MAX), minY(INT_MAX), maxX(INT_MIN), maxY(INT_MIN), isDirty(false) {}
+        
+        void addPoint(int x, int y, int radius = 2) {
+            if (!isDirty) {
+                minX = maxX = x;
+                minY = maxY = y;
+                isDirty = true;
+            } else {
+                minX = (std::min)(minX, x - radius);
+                minY = (std::min)(minY, y - radius);
+                maxX = (std::max)(maxX, x + radius);
+                maxY = (std::max)(maxY, y + radius);
+            }
+        }
+        
+        void clear() {
+            minX = INT_MAX; minY = INT_MAX;
+            maxX = INT_MIN; maxY = INT_MIN;
+            isDirty = false;
+        }
+        
+        void clampTo(int width, int height) {
+            minX = (std::max)(0, minX);
+            minY = (std::max)(0, minY);
+            maxX = (std::min)(width - 1, maxX);
+            maxY = (std::min)(height - 1, maxY);
+        }
+    };
+    
+    DirtyRegion m_currentDirtyRegion;
+    DirtyRegion m_previousDirtyRegion;
+    mutable std::mutex m_dirtyRegionLock;
     
     // Settings
     bool m_useDimming;
