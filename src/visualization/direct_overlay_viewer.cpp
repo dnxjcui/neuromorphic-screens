@@ -24,7 +24,8 @@ DirectOverlayViewer::DirectOverlayViewer(StreamingApp& streamingApp) :
     m_useDimming(false), m_dimmingRate(1.0f),
     m_threshold(15.0f), m_stride(6), m_maxEvents(constants::MAX_EVENT_CONTEXT_WINDOW),  // Default values for overlay: threshold=15.0, stride=6, maxEvents=1000000
     m_controlWindow(nullptr), m_d3dDevice(nullptr), m_d3dDeviceContext(nullptr), 
-    m_swapChain(nullptr), m_mainRenderTargetView(nullptr), m_showControls(true) {
+    m_swapChain(nullptr), m_mainRenderTargetView(nullptr), m_showControls(true),
+    m_temporalIndex(100000, 10000) {  // 100ms time window, max 10000 recent events
 }
 
 DirectOverlayViewer::~DirectOverlayViewer() {
@@ -213,7 +214,7 @@ bool DirectOverlayViewer::CreateBrushes() {
 }
 
 void DirectOverlayViewer::RenderThreadFunction() {
-    FrameRateLimiter limiter(30.0f); // Lower frame rate for stability
+    FrameRateLimiter limiter(60.0f); // Lower frame rate for stability
     
     while (m_threadRunning.load()) {
         // Update streaming app parameters with current overlay settings
@@ -224,34 +225,38 @@ void DirectOverlayViewer::RenderThreadFunction() {
         // Get latest events from streaming app
         const EventStream& stream = m_streamingApp.getEventStream();
         
-        // Show only very recent events based on actual time, not just buffer position
+        // High-performance recent event processing using temporal index
         {
-            std::lock_guard<std::mutex> lock(m_activeDotsLock);
-            m_activeDots.clear();
+            uint64_t currentTime = HighResTimer::GetMicroseconds();
             
+            // Update temporal index with latest events (O(k) where k = new events)
             if (stream.size() > 0) {
-                uint64_t currentTime = HighResTimer::GetMicroseconds();
-                uint64_t recentThreshold = 100000; // 100ms window for events
+                m_temporalIndex.updateFromStream(stream, currentTime);
+            }
+            
+            // Get recent events efficiently (O(k) where k = recent events, not total events)
+            auto recentEvents = m_temporalIndex.getRecentEvents(currentTime);
+            
+            // Update active dots with recent events only
+            {
+                std::lock_guard<std::mutex> lock(m_activeDotsLock);
+                m_activeDots.clear();
+                m_activeDots.reserve(recentEvents.size());
                 
-                // Get thread-safe copy of events
-                auto eventsCopy = stream.getEventsCopy();
-                
-                // Only show events from the last 100ms with proper event detection
-                for (const auto& event : eventsCopy) {
-                    uint64_t eventAbsoluteTime = stream.start_time + event.timestamp;
-                    uint64_t eventAge = currentTime - eventAbsoluteTime;
-                    
-                    // Apply event detection logic similar to implementation guide - show both positive (polarity=1) and negative (polarity=0) events
-                    if (eventAge <= recentThreshold) {
-                        m_activeDots.push_back({event, 1.0f});
-                    }
+                for (const auto& event : recentEvents) {
+                    m_activeDots.push_back({event, 1.0f});
                 }
-                
-                // Debug output
-                static int frameCount = 0;
-                if (frameCount++ % 30 == 0 && !m_activeDots.empty()) {
-                    std::cout << "\nOverlay: " << m_activeDots.size() << " active dots";
-                }
+            }
+            
+            // Debug output with performance stats
+            static int frameCount = 0;
+            if (frameCount++ % 30 == 0 && !recentEvents.empty()) {
+                size_t totalProcessed, duplicatesSkipped, bufferSize;
+                m_temporalIndex.getPerformanceStats(totalProcessed, duplicatesSkipped, bufferSize);
+                std::cout << "\nOverlay: " << recentEvents.size() << " active dots, "
+                         << "buffer: " << bufferSize << ", "
+                         << "processed: " << totalProcessed << ", "
+                         << "duplicates: " << duplicatesSkipped;
             }
         }
         
@@ -306,26 +311,40 @@ void DirectOverlayViewer::RemoveExpiredDots() {
 void DirectOverlayViewer::RenderOverlay() {
     if (!m_memoryDC || !m_bitmapBits) return;
     
-    // Clear bitmap with transparent pixels (alpha = 0)
     uint32_t* pixels = static_cast<uint32_t*>(m_bitmapBits);
-    size_t pixelCount = m_screenWidth * m_screenHeight;
-    memset(pixels, 0, pixelCount * sizeof(uint32_t)); // All transparent
+    DirtyRegion newDirtyRegion;
     
-    // Draw active dots directly to bitmap
+    // Calculate dirty regions and draw active dots
     {
-        std::lock_guard<std::mutex> lock(m_activeDotsLock);
+        std::lock_guard<std::mutex> dotsLock(m_activeDotsLock);
+        std::lock_guard<std::mutex> dirtyLock(m_dirtyRegionLock);
+        
+        // Clear previous frame's dirty region first
+        if (m_previousDirtyRegion.isDirty) {
+            m_previousDirtyRegion.clampTo(m_screenWidth, m_screenHeight);
+            
+            for (int y = m_previousDirtyRegion.minY; y <= m_previousDirtyRegion.maxY; y++) {
+                for (int x = m_previousDirtyRegion.minX; x <= m_previousDirtyRegion.maxX; x++) {
+                    pixels[y * m_screenWidth + x] = 0; // Transparent
+                }
+            }
+        }
+        
+        // Draw active dots and calculate new dirty region
         for (const auto& dot : m_activeDots) {
             const Event& event = dot.event;
             
-            // Select color based on polarity - Green for positive, Red for negative (per implementation guide)
+            // Select color based on polarity
             uint32_t color = (event.polarity > 0) ? 
-                0xFF00FF00 : // Green with full alpha for positive events (ARGB format)
+                0xFF00FF00 : // Green with full alpha for positive events
                 0xFFFF0000;  // Red with full alpha for negative events
             
-            // Draw event highlight with radius as recommended in implementation guide
-            int radius = 2; // 2.0f radius per implementation guide
+            int radius = 2;
             int centerX = event.x;
             int centerY = event.y;
+            
+            // Track dirty region for this dot
+            newDirtyRegion.addPoint(centerX, centerY, radius);
             
             // Bounds check before drawing
             if (centerX >= 0 && centerX < static_cast<int>(m_screenWidth) && 
@@ -346,9 +365,15 @@ void DirectOverlayViewer::RenderOverlay() {
                 }
             }
         }
+        
+        // Update dirty regions for next frame
+        m_previousDirtyRegion = m_currentDirtyRegion;
+        m_currentDirtyRegion = newDirtyRegion;
     }
     
     // Update the layered window with alpha blending
+    // Note: Still updating full window for simplicity with layered windows
+    // For even better performance, could use smaller update regions
     POINT ptSrc = {0, 0};
     POINT ptDst = {0, 0};
     SIZE sizeWnd = {static_cast<LONG>(m_screenWidth), static_cast<LONG>(m_screenHeight)};

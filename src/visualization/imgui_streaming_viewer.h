@@ -2,6 +2,7 @@
 
 #include "../core/event_types.h"
 #include "../core/timing.h"
+#include "../core/temporal_index.h"
 #include "../streaming_app.h"
 #include <vector>
 #include <mutex>
@@ -72,6 +73,9 @@ private:
     // Event visualization
     std::vector<std::pair<Event, float>> m_activeDots;
     mutable std::mutex m_activeDotsLock;
+    
+    // High-performance temporal indexing for recent events
+    TemporalEventIndex m_temporalIndex;
     
     // Visualization thread
     std::thread m_visualizationThread;

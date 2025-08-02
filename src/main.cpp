@@ -55,6 +55,7 @@ public:
         std::cout << "  aedat  - AEDAT binary format (default, most efficient)\n";
         std::cout << "  csv    - CSV text format with headers\n";
         std::cout << "  txt    - Space-separated format (rpg_dvs_ros compatible)\n";
+        std::cout << "\nNote: File capture uses unlimited buffer - all events are saved to file.\n";
     }
 };
 
@@ -81,6 +82,7 @@ public:
         events.width = capture.GetWidth();
         events.height = capture.GetHeight();
         events.start_time = HighResTimer::GetMicroseconds();
+        events.max_events = constants::UNLIMITED_BUFFER; // Unlimited buffer for file capture
         
         RecordingTimer timer;
         timer.Start(duration);
@@ -97,7 +99,10 @@ public:
             uint64_t currentTime = HighResTimer::GetMicroseconds();
             uint32_t frameEvents = static_cast<uint32_t>(events.events.size());
             
-            if (capture.CaptureFrame(events, currentTime)) {
+            // bool ScreenCapture::CaptureFrame(EventStream& events, uint64_t timestamp, float threshold, uint32_t stride, size_t maxEvents) {
+
+            // if (capture.CaptureFrame(events, currentTime)) {
+            if (capture.CaptureFrame(events, currentTime, 30.0f, 3, 3072 * 1920)) {
                 uint32_t newEvents = static_cast<uint32_t>(events.events.size()) - frameEvents;
                 totalEvents += newEvents;
                 
@@ -118,6 +123,13 @@ public:
             return;
         }
         
+        // Show buffer status
+        if (events.isUnlimited()) {
+            std::cout << "Buffer: Unlimited (all events captured)" << std::endl;
+        } else {
+            std::cout << "Buffer: Limited to " << events.max_events << " events" << std::endl;
+        }
+        
         // Save events
         if (EventFileFormats::WriteEvents(events, outputFile, format)) {
             std::cout << "Events saved to: " << outputFile << std::endl;
@@ -127,7 +139,8 @@ public:
             stats.calculate(events);
             
             std::cout << "\nCapture Statistics:" << std::endl;
-            std::cout << "Total Events: " << stats.total_events << std::endl;
+            std::cout << "Events Stored: " << stats.total_events << std::endl;
+            std::cout << "Total Events Generated: " << events.total_events_generated << std::endl;
             std::cout << "Positive Events: " << stats.positive_events << std::endl;
             std::cout << "Negative Events: " << stats.negative_events << std::endl;
             std::cout << "Duration: " << (stats.duration_us / 1000000.0f) << " seconds" << std::endl;

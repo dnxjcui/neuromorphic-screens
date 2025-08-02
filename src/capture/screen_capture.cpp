@@ -318,21 +318,49 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp, float
     const size_t maxEventsPerFrame = maxEvents; // Use the provided max events parameter
     // Use the provided threshold and stride parameters instead of hardcoded values
     
-    // Simple approach - no complex parallelization
+    // Parallelized approach using OpenMP
     std::vector<Event> frameEvents;
     frameEvents.reserve(maxEventsPerFrame);
     
-    for (uint32_t y = 0; y < m_height; y += stride) {
-        for (uint32_t x = 0; x < m_width; x += stride) {
-            int8_t pixelChange = CalculatePixelDifference(x, y, threshold);
+    // Pre-calculate total number of pixels to process
+    uint32_t totalRows = (m_height + stride - 1) / stride;
+    uint32_t totalCols = (m_width + stride - 1) / stride;
+    
+    // Use OpenMP for parallel processing
+    #pragma omp parallel
+    {
+        // Each thread gets its own local event vector
+        std::vector<Event> localEvents;
+        localEvents.reserve(maxEventsPerFrame / omp_get_num_threads());
+        
+        // Parallel loop over rows
+        #pragma omp for schedule(dynamic, 16) // Dynamic scheduling with chunk size 16
+        for (int row = 0; row < static_cast<int>(totalRows); ++row) {
+            uint32_t y = row * stride;
             
-            if (pixelChange >= 0 && frameEvents.size() < maxEventsPerFrame) {
-                // Generate unique timestamp for each event
-                uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
-                uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
+            for (uint32_t x = 0; x < m_width; x += stride) {
+                int8_t pixelChange = CalculatePixelDifference(x, y, threshold);
                 
-                Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
-                frameEvents.push_back(event);
+                if (pixelChange >= 0 && localEvents.size() < maxEventsPerFrame / omp_get_num_threads()) {
+                    // Generate unique timestamp for each event
+                    uint64_t uniqueTimestamp = HighResTimer::GetMicroseconds();
+                    uint64_t relativeTimestamp = uniqueTimestamp - events.start_time;
+                    
+                    Event event(relativeTimestamp, static_cast<uint16_t>(x), static_cast<uint16_t>(y), pixelChange);
+                    localEvents.push_back(event);
+                }
+            }
+        }
+        
+        // Critical section to merge local events into global vector
+        #pragma omp critical
+        {
+            if (frameEvents.size() + localEvents.size() <= maxEventsPerFrame) {
+                frameEvents.insert(frameEvents.end(), localEvents.begin(), localEvents.end());
+            } else {
+                // If we would exceed maxEventsPerFrame, only add what fits
+                size_t remainingSpace = maxEventsPerFrame - frameEvents.size();
+                frameEvents.insert(frameEvents.end(), localEvents.begin(), localEvents.begin() + remainingSpace);
             }
         }
     }

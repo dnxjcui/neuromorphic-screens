@@ -80,3 +80,4 @@ nul
 data/*
 palette.png
 !CMakeLists.txt
+*.aedat

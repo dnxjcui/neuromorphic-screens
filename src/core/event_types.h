@@ -17,8 +17,9 @@ namespace constants {
     constexpr float DOT_FADE_DURATION = 0.1f;     // 100ms fade duration for transient effects
     constexpr float REPLAY_FPS = 60.0f;           // 60 FPS target for replay
     constexpr uint64_t FRAME_TIMEOUT_MS = 16;     // 16ms frame timeout
-    constexpr uint32_t MAX_EVENTS_PER_FRAME = 10000; // Safety limit for events per frame
-    constexpr size_t MAX_EVENT_CONTEXT_WINDOW = 1000000; // Maximum events in rolling buffer
+    constexpr uint32_t MAX_EVENTS_PER_FRAME = 100000; // Safety limit for events per frame
+    constexpr size_t MAX_EVENT_CONTEXT_WINDOW = 1000000; // Maximum events in rolling buffer (for streaming/overlay)
+    constexpr size_t UNLIMITED_BUFFER = SIZE_MAX; // Unlimited buffer for file capture
 }
 
 /**
@@ -52,12 +53,12 @@ struct EventStream {
     EventStream(size_t max_size) : width(0), height(0), start_time(0), 
                                   max_events(max_size), total_events_generated(0) {}
     
-    // Thread-safe method to add events with rolling buffer behavior
+    // Thread-safe method to add events with rolling buffer behavior (only if max_events is limited)
     void addEvents(const std::vector<Event>& newEvents) {
         std::lock_guard<std::mutex> lock(events_mutex);
         for (const auto& event : newEvents) {
-            if (events.size() >= max_events) {
-                events.pop_front();
+            if (max_events != constants::UNLIMITED_BUFFER && events.size() >= max_events) {
+                events.pop_front(); // Only roll if buffer is limited
             }
             events.push_back(event);
             total_events_generated++;
@@ -67,8 +68,8 @@ struct EventStream {
     // Thread-safe method to add single event
     void addEvent(const Event& event) {
         std::lock_guard<std::mutex> lock(events_mutex);
-        if (events.size() >= max_events) {
-            events.pop_front();
+        if (max_events != constants::UNLIMITED_BUFFER && events.size() >= max_events) {
+            events.pop_front(); // Only roll if buffer is limited
         }
         events.push_back(event);
         total_events_generated++;
@@ -84,6 +85,11 @@ struct EventStream {
     size_t size() const {
         std::lock_guard<std::mutex> lock(events_mutex);
         return events.size();
+    }
+    
+    // Check if buffer is unlimited
+    bool isUnlimited() const {
+        return max_events == constants::UNLIMITED_BUFFER;
     }
     
     // File format compatibility methods
