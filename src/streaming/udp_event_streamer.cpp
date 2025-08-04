@@ -25,9 +25,7 @@ UdpEventStreamer::UdpEventStreamer()
     , m_targetPort(9999)
     , m_eventsPerBatch(100)
     , m_eventWidth(128)
-    , m_eventHeight(128)
-    , m_simulationMode(true)
-    , m_currentTimeUs(0) {
+    , m_eventHeight(128) {
     
 #ifdef _WIN32
     // Initialize Winsock
@@ -97,7 +95,6 @@ bool UdpEventStreamer::CreateSocket() {
 
 void UdpEventStreamer::SetEventSource(std::function<std::vector<DVSEvent>()> eventSource) {
     m_eventSource = eventSource;
-    m_simulationMode = false;
 }
 
 void UdpEventStreamer::Start() {
@@ -140,30 +137,6 @@ void UdpEventStreamer::Stop() {
     std::cout << "UDP Event Streamer stopped" << std::endl;
 }
 
-std::vector<DVSEvent> UdpEventStreamer::GenerateSimulatedEvents() {
-    std::vector<DVSEvent> events;
-    events.reserve(m_eventsPerBatch);
-    
-    // Initialize random number generator (thread-local)
-    static thread_local std::random_device rd;
-    static thread_local std::mt19937 rng(rd());
-    std::uniform_int_distribution<uint16_t> distX(0, m_eventWidth - 1);
-    std::uniform_int_distribution<uint16_t> distY(0, m_eventHeight - 1);
-    std::uniform_int_distribution<int> distPolarity(0, 1);
-    
-    for (uint32_t i = 0; i < m_eventsPerBatch; ++i) {
-        DVSEvent event;
-        event.timestamp = m_currentTimeUs;
-        event.x = distX(rng);
-        event.y = distY(rng);
-        event.polarity = (distPolarity(rng) == 1);
-        
-        events.push_back(event);
-        m_currentTimeUs += 1; // Simulate 1 microsecond per event
-    }
-    
-    return events;
-}
 
 void UdpEventStreamer::StreamingThreadFunction() {
     // Prepare packet buffer
@@ -180,10 +153,8 @@ void UdpEventStreamer::StreamingThreadFunction() {
     while (m_isRunning.load()) {
         std::vector<DVSEvent> events;
         
-        // Get events from source (simulation or real data)
-        if (m_simulationMode) {
-            events = GenerateSimulatedEvents();
-        } else if (m_eventSource) {
+        // Get events from real data source
+        if (m_eventSource) {
             events = m_eventSource();
             if (events.empty()) {
                 // If no events available, wait a bit and continue
@@ -237,11 +208,8 @@ void UdpEventStreamer::StreamingThreadFunction() {
             }
         }
         
-        // Simulate real-time by waiting for the duration represented by the events
-        // This assumes 1 event per microsecond simulation rate
-        if (m_simulationMode) {
-            std::this_thread::sleep_for(std::chrono::microseconds(events.size()));
-        }
+        // Brief pause to prevent overwhelming the network
+        std::this_thread::sleep_for(std::chrono::microseconds(1000));
     }
     
     auto endTime = std::chrono::high_resolution_clock::now();

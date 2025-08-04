@@ -2,19 +2,20 @@
 
 #include "../core/event_types.h"
 #include "../core/timing.h"
-#include <imgui.h>
-#include <backends/imgui_impl_win32.h>
-#include <backends/imgui_impl_dx11.h>
-#include <d3d11.h>
 #include <vector>
 #include <thread>
 #include <atomic>
 #include <mutex>
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    #include <d3d11.h>
 #endif
-#include <windows.h>
+
+#include <imgui.h>
+#include <backends/imgui_impl_win32.h>
+#include <backends/imgui_impl_dx11.h>
 
 namespace neuromorphic {
 

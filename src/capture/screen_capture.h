@@ -1,11 +1,15 @@
 #pragma once
 
 #include "../core/event_types.h"
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <windows.h>
 #include <memory>
 #include <vector>
+
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    #include <d3d11.h>
+    #include <dxgi1_2.h>
+#endif
 
 namespace neuromorphic {
 

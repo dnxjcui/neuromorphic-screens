@@ -28,84 +28,96 @@ cmake --build . --config Release
 
 **Record screen activity:**
 ```bash
-./neuromorphic_screens.exe --capture --output recording.evt --duration 5 --format binary
+./neuromorphic_screens.exe --capture --output recording.aedat --duration 5 --format aedat
 ```
 
-**Visualize events (ImGui GUI - RECOMMENDED):**
+**Visualize events with ImGui GUI:**
 ```bash
-./neuromorphic_screens_imgui.exe --input recording.evt
+./neuromorphic_screens.exe --replay --input recording.aedat --gui
 ```
 
-**Real-time streaming with live visualization:**
+**CLI event statistics:**
 ```bash
-./neuromorphic_screens_streaming.exe --save recording.aedat --format aedat
+./neuromorphic_screens.exe --replay --input recording.aedat
+```
+
+**Real-time streaming with live visualization (DEFAULT):**
+```bash
+./neuromorphic_screens_streaming.exe --save recording.aedat
 ```
 
 **Direct overlay mode (events on screen):**
 ```bash
-./neuromorphic_screens_overlay.exe --save overlay_capture.aedat --format aedat
+./neuromorphic_screens_streaming.exe --overlay --save overlay_capture.aedat
 ```
 
-**CLI statistics:**
+**UDP event streaming:**
 ```bash
-./neuromorphic_screens.exe --replay --input recording.evt
+./neuromorphic_screens_streaming.exe --UDP --ip 127.0.0.1 --port 9999
+```
+
+**UDP streaming with overlay visualization:**
+```bash
+./neuromorphic_screens_streaming.exe --UDP --overlay --port 9999
 ```
 
 ## Command Line Options
 
+### Main CLI Application (`neuromorphic_screens.exe`)
 ```bash
 # Capture screen activity
-./neuromorphic_screens.exe --capture --output <file> --duration <seconds> --format <csv|binary|txt>
+./neuromorphic_screens.exe --capture --output <file> --duration <seconds> --format <aedat|csv|txt>
 
-# Replay events with statistics
+# Replay events with CLI statistics
 ./neuromorphic_screens.exe --replay --input <file>
 
-# Launch ImGui GUI (recommended)
-./neuromorphic_screens_imgui.exe --input <file>
+# Replay events with ImGui visualization
+./neuromorphic_screens.exe --replay --input <file> --gui
+```
 
-# Real-time streaming mode
+### Streaming Application (`neuromorphic_screens_streaming.exe`)
+```bash
+# Default: Real-time streaming with GUI
 ./neuromorphic_screens_streaming.exe [--save <file>] [--format <aedat|csv>]
 
-# Direct overlay mode
-./neuromorphic_screens_overlay.exe [--save <file>] [--format <aedat|csv|space>] [--dimming <rate>] [--no-dimming]
+# Direct overlay visualization
+./neuromorphic_screens_streaming.exe --overlay [--dimming <rate>] [--no-dimming]
+
+# UDP event streaming
+./neuromorphic_screens_streaming.exe --UDP [--ip <address>] [--port <port>] [--batch <size>]
+
+# UDP streaming with visualization options
+./neuromorphic_screens_streaming.exe --UDP --overlay [--novis]
 ```
 
 ## Application Modes
 
-### 1. ImGui Visualization (`neuromorphic_screens_imgui.exe`)
-- Professional DirectX 11 interface with video-like playback
-- Interactive controls: Play/Pause/Stop, speed control, progress seeking
-- Export to GIF and MP4 with FFmpeg integration
-- Real-time statistics and event analysis
+### 1. Main CLI Application (`neuromorphic_screens.exe`)
+- **Capture Mode**: Record screen events to file with unlimited buffer
+- **Replay Mode**: Display event statistics and sample events
+- **GUI Mode** (`--gui`): Full ImGui interface with video-like playback, interactive controls, and real-time statistics
 
-### 2. Real-Time Streaming (`neuromorphic_screens_streaming.exe`)  
-- Live event capture and visualization in a resizable window
-- **Configurable Parameters**: Threshold (0-100), Stride (1-30), Max Events (1000-100000)
-- Real-time parameter adjustment with immediate visual feedback
-- Optional event saving to file while streaming
-
-### 3. Direct Overlay Mode (`neuromorphic_screens_overlay.exe`)
-- Events displayed directly on your screen as colored dots
-- **Green dots** = positive events (brightness increase)
-- **Red dots** = negative events (brightness decrease)  
-- Resizable control window with same parameters as streaming mode
-- Perfect for monitoring screen activity in real-time
+### 2. Streaming Application (`neuromorphic_screens_streaming.exe`)
+- **Default Mode**: Live streaming with ImGui interface and configurable parameters
+- **Overlay Mode** (`--overlay`): Events displayed directly on screen as colored dots
+- **UDP Mode** (`--UDP`): Network streaming with optional visualization
+- All modes support real-time parameter adjustment and file saving
 
 ## File Formats
 
-- **Binary (.evt)**: Efficient binary format for large datasets (recommended)
-- **CSV**: Comma-separated with headers (`timestamp,x,y,polarity`)
-- **Space-separated**: Compatible with rpg_dvs_ros (`timestamp x y polarity`)
+- **AEDAT (.aedat)**: Standard neuromorphic format, most efficient (recommended)
+- **CSV (.csv)**: Comma-separated with headers (`timestamp,x,y,polarity`)
+- **TXT (.txt)**: Space-separated format compatible with rpg_dvs_ros (`timestamp x y polarity`)
 
 ## Usage Examples
 
 ### Quick Recording and Visualization
 ```bash
 # Record 5 seconds of screen activity
-./neuromorphic_screens.exe --capture --output test.evt --duration 5
+./neuromorphic_screens.exe --capture --output test.aedat --duration 5
 
 # Launch ImGui viewer (automatic playback)
-./neuromorphic_screens_imgui.exe --input test.evt
+./neuromorphic_screens.exe --replay --input test.aedat --gui
 ```
 
 ### Export Options
@@ -116,7 +128,7 @@ cmake --build . --config Release
 5. **Files saved** to project directory with professional quality
 
 ### Performance Tips
-- Use **binary (.evt) format** for fastest loading
+- Use **binary (.aedat) format** for fastest loading
 - Enable **dimming effects** for better visual quality
 - Adjust **downsample factor** for dense recordings
 - Export at **30 FPS** for optimal file size/quality balance
@@ -151,7 +163,7 @@ The ImGui implementation provides a stable, professional visualization platform 
 
 ```
 neuromorphic_screens/
-├── CMakeLists.txt              # Build configuration with 4 executable targets
+├── CMakeLists.txt              # Build configuration with 2 executable targets + benchmark
 ├── LICENSE                     # Apache 2.0 license
 ├── README.md                   # This documentation file
 ├── REPORT.md                   # Comprehensive technical report
@@ -169,26 +181,35 @@ neuromorphic_screens/
 │       └── happy_original.gif  # Original comparison recording
 │
 └── src/                        # Source code organized by functionality
-    ├── main.cpp                # CLI application for capture/replay with statistics
-    ├── main_imgui.cpp          # ImGui GUI application entry point
-    ├── main_streaming.cpp      # Real-time streaming application entry point
-    ├── main_overlay.cpp        # Direct screen overlay application entry point
-    ├── streaming_app.cpp       # Shared streaming application logic
-    ├── streaming_app.h         # Streaming application interface and configuration
+    ├── main.cpp                # CLI application for capture/replay with ImGui support
+    ├── main_streaming.cpp      # Consolidated streaming application (overlay, UDP, GUI modes)
     │
     ├── capture/                # Screen capture system using Desktop Duplication API
     │   ├── screen_capture.cpp  # DirectX 11 screen capture implementation
     │   └── screen_capture.h    # Screen capture interface and pixel processing
     │
-    ├── core/                   # Core data structures and algorithms
-    │   ├── event_types.h       # Event data structures, EventStream, and constants
-    │   ├── event_file.cpp      # Event file I/O operations
-    │   ├── event_file.h        # Event file interface
-    │   ├── event_file_formats.cpp  # Multi-format event file serialization
-    │   ├── event_file_formats.h    # File format definitions (AEDAT, CSV, space-separated)
-    │   ├── temporal_index.h    # High-performance temporal event indexing with O(k) access
-    │   ├── timing.cpp          # High-resolution timing implementation
-    │   └── timing.h            # Microsecond precision timing utilities
+    ├── core/                   # Core data structures and shared functionality
+    │   ├── command_line_parser.h    # Shared command-line argument parsing utilities
+    │   ├── streaming_app.cpp        # Shared streaming application logic
+    │   ├── streaming_app.h          # Streaming application interface and configuration
+    │   ├── event_types.h            # Event data structures, EventStream, and constants
+    │   ├── event_file.cpp           # Event file I/O operations
+    │   ├── event_file.h             # Event file interface
+    │   ├── event_file_formats.cpp   # Multi-format event file serialization
+    │   ├── event_file_formats.h     # File format definitions (AEDAT, CSV, space-separated)
+    │   ├── temporal_index.h         # High-performance temporal event indexing with O(k) access
+    │   ├── timing.cpp               # High-resolution timing implementation
+    │   └── timing.h                 # Microsecond precision timing utilities
+    │
+    ├── streaming/              # UDP streaming functionality
+    │   ├── udp_event_streamer.cpp  # UDP network streaming implementation
+    │   └── udp_event_streamer.h    # UDP streaming interface and protocol
+    │
+    ├── test_UDP/               # Python UDP testing scripts
+    │   ├── README.md           # UDP testing documentation
+    │   ├── test_event_receiver.py   # Python UDP event receiver for testing
+    │   ├── run_streaming_test.py    # Automated UDP streaming test runner
+    │   └── check_python_deps.py     # Python dependency verification script
     │
     └── visualization/          # Event visualization and GUI components
         ├── imgui_event_viewer.cpp   # Professional event viewer with playback controls
@@ -201,11 +222,13 @@ neuromorphic_screens/
 
 ### Core Components
 
-#### **Executables** (4 Applications)
-- **`neuromorphic_screens.exe`** - CLI application for event capture and replay with detailed statistics
-- **`neuromorphic_screens_imgui.exe`** - Professional ImGui GUI with video-like playback controls and export features
-- **`neuromorphic_screens_streaming.exe`** - Real-time event streaming with live visualization and parameter adjustment
-- **`neuromorphic_screens_overlay.exe`** - Direct screen overlay mode displaying events as colored dots on your desktop
+#### **Executables** (2 Applications + Benchmark)
+- **`neuromorphic_screens.exe`** - CLI application for event capture and replay with optional ImGui GUI (`--gui` flag)
+- **`neuromorphic_screens_streaming.exe`** - Consolidated streaming application with three modes:
+  - **Default mode**: Real-time streaming with ImGui visualization
+  - **Overlay mode** (`--overlay`): Direct screen overlay displaying events as colored dots
+  - **UDP mode** (`--UDP`): Network streaming with optional visualization
+- **`benchmark_parallelization.exe`** - OpenMP performance benchmarking tool
 
 #### **Screen Capture System** (`src/capture/`)
 - **`screen_capture.cpp/.h`** - Desktop Duplication API implementation with OpenMP parallelization for high-performance pixel-by-pixel change detection, supporting configurable thresholds and stride patterns
@@ -223,8 +246,12 @@ neuromorphic_screens/
 - **`direct_overlay_viewer.cpp/.h`** - Direct screen overlay rendering engine using layered windows with efficient dirty region tracking and GDI-based dot rendering
 
 #### **Application Architecture** (`src/`)
+- **`main.cpp`** - CLI application entry point with capture, replay, and optional ImGui GUI modes
+- **`main_streaming.cpp`** - Consolidated streaming application entry point with mode selection (default, overlay, UDP)
+
+#### **Core Shared Components** (`src/core/`)
+- **`command_line_parser.h`** - Shared command-line argument parsing utilities used by both applications
 - **`streaming_app.cpp/.h`** - Shared streaming application logic with thread-safe event capture, configurable parameters, and optional file saving
-- **`main_*.cpp`** - Application entry points for each of the four distinct usage modes (CLI, GUI, streaming, overlay)
 
 #### **Performance Tools**
 - **`benchmark_parallelization.cpp`** - OpenMP benchmarking tool for testing pixel processing performance with serial vs parallel implementations

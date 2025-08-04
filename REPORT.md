@@ -8,6 +8,34 @@ This document provides a comprehensive technical analysis of the neuromorphic sc
 
 **PRODUCTION-READY IMPLEMENTATION**: The project has achieved a fully functional neuromorphic screen capture system with **real screen capture**, **multi-format storage**, **advanced ImGui visualization**, **OpenMP parallelization**, and **stable DirectX 11 GUI** that provides automatic video-like playback without segmentation faults.
 
+### ✅ MAJOR REFACTORING COMPLETED - February 2025
+
+**CONSOLIDATED ARCHITECTURE**: The project has been completely refactored from 5 separate executables to 2 consolidated applications with shared core functionality:
+
+#### Key Refactoring Achievements:
+- **Executable Consolidation**: Reduced from 5 to 2 executables plus benchmark
+- **Shared Core Library**: Created `src/core/` with common functionality including command-line parsing and streaming logic
+- **Unified Command Interface**: Consistent command-line arguments across all applications
+- **Code Deduplication**: Eliminated redundant code through shared libraries
+- **Simplified User Experience**: Streamlined usage patterns with fewer executables to manage
+
+#### New Executable Structure:
+1. **`neuromorphic_screens.exe`** - Unified CLI application
+   - Capture mode: `--capture --output file.aedat --duration 5`
+   - Replay mode: `--replay --input file.aedat`
+   - GUI mode: `--replay --input file.aedat --gui` (replaces `neuromorphic_screens_imgui.exe`)
+
+2. **`neuromorphic_screens_streaming.exe`** - Consolidated streaming application
+   - Default streaming: Real-time visualization with ImGui interface
+   - Overlay mode: `--overlay` (replaces `neuromorphic_screens_overlay.exe`)
+   - UDP streaming: `--UDP --port 9999` with optional visualization modes
+
+#### Shared Core Components (`src/core/`):
+- **`command_line_parser.h`**: Unified argument parsing for all applications
+- **`streaming_app.h/.cpp`**: Shared streaming logic and configuration
+- **Event processing libraries**: Common file I/O, timing, and data structures
+- **UDP streaming**: Moved to `src/streaming/` with test scripts in `src/test_UDP/`
+
 ### ✅ Implemented and Tested Components:
 - **Event Data Structures**: Complete implementation with memory-efficient design
 - **High-Resolution Timing**: Microsecond precision timing with unique event timestamps
@@ -46,13 +74,19 @@ The project now features a robust ImGui-based GUI that eliminates all segmentati
 # Replay recorded events with statistics
 ./neuromorphic_screens.exe --replay --input recording.csv
 
-# Launch stable ImGui GUI with automatic video-like playback (RECOMMENDED)
-./neuromorphic_screens_imgui.exe --input recording.csv   # CSV format
-./neuromorphic_screens_imgui.exe --input recording.evt   # Binary format  
-./neuromorphic_screens_imgui.exe --input recording.txt   # Space-separated
+# Launch ImGui GUI with automatic video-like playbook (RECOMMENDED)
+./neuromorphic_screens.exe --replay --input recording.csv --gui   # CSV format
+./neuromorphic_screens.exe --replay --input recording.aedat --gui   # Binary format  
+./neuromorphic_screens.exe --replay --input recording.txt --gui   # Space-separated
 
-# Legacy FLTK GUI (deprecated due to segmentation faults)
-./neuromorphic_screens_gui.exe --input recording.csv   # Use ImGui version instead
+# Real-time streaming with ImGui interface
+./neuromorphic_screens_streaming.exe --save recording.aedat
+
+# Direct overlay mode with screen dots
+./neuromorphic_screens_streaming.exe --overlay --save overlay.aedat
+
+# UDP streaming mode
+./neuromorphic_screens_streaming.exe --UDP --port 9999
 
 # Show usage information
 ./neuromorphic_screens.exe --help
@@ -65,8 +99,8 @@ The project now features a robust ImGui-based GUI that eliminates all segmentati
 - **Build System**: CMake 3.16+ ✅
 - **OpenMP**: Parallelization enabled ✅
 - **ImGui**: DirectX 11 GUI library integrated ✅
-- **FLTK**: Legacy GUI library (deprecated) ✅
-- **Status**: CLI and stable ImGui GUI applications build and run successfully ✅
+- **Core Libraries**: Command-line parsing, streaming functionality consolidated ✅
+- **Status**: 2 consolidated applications build and run successfully ✅
 
 ### ✅ Performance Improvements:
 - **Parallelized Screen Capture**: OpenMP acceleration for pixel comparison loops
@@ -160,12 +194,13 @@ cd build
 # Configure with CMake (will find FLTK automatically)
 cmake .. -G "Visual Studio 17 2022" -A x64
 
-# Build both CLI and GUI applications
+# Build consolidated applications
 cmake --build . --config Release
 
 # Executables will be in: 
-# - build/bin/Release/neuromorphic_screens.exe (CLI)
-# - build/bin/Release/neuromorphic_screens_gui.exe (GUI)
+# - build/bin/Release/neuromorphic_screens.exe (CLI with optional GUI)
+# - build/bin/Release/neuromorphic_screens_streaming.exe (Streaming with multiple modes)
+# - build/bin/Release/benchmark_parallelization.exe (Performance benchmarking)
 ```
 
 ### Running the Program
@@ -208,17 +243,20 @@ This validates all core components including timing, file I/O, parallelization, 
 - Screen dimensions
 - Sample events (first/last 10)
 
-#### 4. FLTK GUI Visualization (NO MOUSE MOVEMENT REQUIRED)
+#### 4. ImGui GUI Visualization (NO MOUSE MOVEMENT REQUIRED)
 
 ```bash
-# Launch the FLTK GUI application with automatic playback
-./neuromorphic_screens_gui.exe --input my_recording.evt
+# Launch the ImGui GUI application with automatic playback
+./neuromorphic_screens.exe --replay --input my_recording.aedat --gui
 
-# Or launch without file and load later
-./neuromorphic_screens_gui.exe
+# Real-time streaming with ImGui interface
+./neuromorphic_screens_streaming.exe --save streaming.aedat
+
+# Direct overlay mode
+./neuromorphic_screens_streaming.exe --overlay --save overlay.aedat
 ```
 
-**FLTK GUI Features:**
+**ImGui GUI Features:**
 - **AUTOMATIC PLAYBACK**: No mouse movement required - plays immediately on load
 - **Resizable Interface**: Window can be resized, canvas scales dynamically
 - **Interactive Controls**: 
@@ -248,7 +286,7 @@ This validates all core components including timing, file I/O, parallelization, 
 ./neuromorphic_screens.exe --capture --output mouse_movement.evt --duration 5
 
 # View in GUI (automatic playback, no mouse movement needed)
-./neuromorphic_screens_gui.exe --input mouse_movement.evt
+./neuromorphic_screens.exe --replay --input mouse_movement.aedat --gui
 ```
 
 #### Example 2: Application Window Activity
@@ -266,7 +304,7 @@ This validates all core components including timing, file I/O, parallelization, 
 ./neuromorphic_screens.exe --capture --output video_events.evt --duration 10
 
 # Visualize with slow motion control
-./neuromorphic_screens_gui.exe --input video_events.evt
+./neuromorphic_screens.exe --replay --input video_events.aedat --gui
 ```
 
 ### File Format Details
@@ -297,16 +335,16 @@ This validates all core components including timing, file I/O, parallelization, 
    - Static screens produce few events
    - Check that screen capture permissions are granted
 
-3. **"FLTK GUI doesn't start"**
-   - Ensure FLTK is built at `C:\Program Files\fltk-1.4.4\build\lib\Release\fltk.lib`
-   - Check that all Windows libraries are available (gdiplus, user32, etc.)
-   - Verify the .evt file exists and is valid
+3. **"ImGui GUI doesn't start"**
+   - Ensure ImGui is available at `C:\Program Files\imgui`
+   - Check that DirectX 11 is available on the system
+   - Verify the .aedat file exists and is valid
 
 4. **"Build errors"**
    - Ensure Visual Studio 2022 is installed with C++ tools
    - Check that CMake 3.16+ is in PATH
    - Verify OpenMP is available
-   - Make sure FLTK is properly built
+   - Make sure ImGui is properly installed
 
 #### Performance Tips:
 
@@ -1303,11 +1341,12 @@ if (eventAge <= recentThreshold) {
 **CMakeLists.txt**: Updated to include ImGui for both streaming and overlay applications
 
 **Key Usage Commands:**
-- `--capture --output file.evt --duration 5`: Record 5 seconds of screen activity (parallelized)  
-- `--replay --input file.evt`: View event statistics
-- `neuromorphic_screens_imgui.exe --input file.evt`: Launch ImGui GUI with automatic playback
+- `--capture --output file.aedat --duration 5`: Record 5 seconds of screen activity (parallelized)  
+- `--replay --input file.aedat`: View event statistics
+- `--replay --input file.aedat --gui`: Launch ImGui GUI with automatic playback
 - `neuromorphic_screens_streaming.exe --save capture.aedat`: Real-time streaming with configurable parameters
-- `neuromorphic_screens_overlay.exe --save overlay.aedat`: Direct overlay mode with screen dots
+- `neuromorphic_screens_streaming.exe --overlay --save overlay.aedat`: Direct overlay mode with screen dots
+- `neuromorphic_screens_streaming.exe --UDP --port 9999`: UDP streaming mode
 - `--test`: Validate all system components including parallelization
 
 **CRITICAL FIXES IMPLEMENTED:**

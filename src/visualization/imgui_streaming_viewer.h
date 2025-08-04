@@ -3,7 +3,7 @@
 #include "../core/event_types.h"
 #include "../core/timing.h"
 #include "../core/temporal_index.h"
-#include "../streaming_app.h"
+#include "../core/streaming_app.h"
 #include <vector>
 #include <mutex>
 #include <atomic>
@@ -11,10 +11,13 @@
 #include <string>
 
 // Windows and DirectX includes
-#include <windows.h>
-#include <d3d11.h>
-#include <d3dcompiler.h>
-#include <dxgi.h>
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    #include <d3d11.h>
+    #include <d3dcompiler.h>
+    #include <dxgi.h>
+#endif
 
 // ImGui includes
 #include <imgui.h>

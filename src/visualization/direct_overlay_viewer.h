@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../streaming_app.h"
+#include "../core/streaming_app.h"
 #include "../core/timing.h"
 #include "../core/temporal_index.h"
 #include <atomic>
@@ -9,13 +9,21 @@
 #include <vector>
 #include <algorithm>
 
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <d2d1.h>
-#include <dwrite.h>
-#include <commctrl.h>
-#include <windows.h>
-#include <dwmapi.h>
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    #include <d3d11.h>
+    #include <dxgi1_2.h>
+    #include <d2d1.h>
+    #include <dwrite.h>
+    #include <dwmapi.h>
+    #include <commctrl.h>
+    #pragma comment(lib, "d3d11.lib")
+    #pragma comment(lib, "dxgi.lib")
+    #pragma comment(lib, "d2d1.lib")
+    #pragma comment(lib, "dwrite.lib")
+    #pragma comment(lib, "dwmapi.lib")
+#endif
 
 // ImGui includes
 #include <imgui.h>

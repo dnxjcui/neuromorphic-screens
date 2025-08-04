@@ -29,6 +29,7 @@ set(BASE_SOURCES
     src/core/timing.cpp
     src/core/event_file.cpp
     src/core/event_file_formats.cpp
+    src/core/streaming_app.cpp
     src/capture/screen_capture.cpp
 )
 
@@ -38,38 +39,16 @@ set(CLI_SOURCES
     ${BASE_SOURCES}
 )
 
-# Source files for ImGui GUI application
-set(IMGUI_GUI_SOURCES
-    src/main_imgui.cpp
-    src/visualization/imgui_event_viewer.cpp
-    ${BASE_SOURCES}
-)
-
-# Source files for Streaming application
+# Source files for Streaming application (consolidated)
 set(STREAMING_SOURCES
     src/main_streaming.cpp
-    src/streaming_app.cpp
     src/visualization/imgui_streaming_viewer.cpp
-    ${BASE_SOURCES}
-)
-
-# Source files for Direct Overlay application
-set(OVERLAY_SOURCES
-    src/main_overlay.cpp
-    src/streaming_app.cpp
     src/visualization/direct_overlay_viewer.cpp
-    ${BASE_SOURCES}
-)
-
-# Source files for UDP Event Streamer application
-set(UDP_STREAMER_SOURCES
-    src/main_udp_streamer.cpp
-    src/streaming_app.cpp
     src/streaming/udp_event_streamer.cpp
     ${BASE_SOURCES}
 )
 
-# Create CLI executable
+# Create CLI executable (with optional ImGui support)
 add_executable(neuromorphic_screens ${CLI_SOURCES})
 
 # Link libraries for CLI
@@ -87,7 +66,7 @@ if(WIN32)
     )
 endif()
 
-# ImGui configuration for stable GUI
+# ImGui configuration for GUI support
 if(WIN32)
     # Set ImGui paths - using the Program Files location
     set(IMGUI_DIR "C:/Program Files/imgui")
@@ -107,14 +86,17 @@ if(WIN32)
             "${IMGUI_DIR}/backends/imgui_impl_dx11.cpp"
         )
         
-        # Create ImGui GUI executable
-        add_executable(neuromorphic_screens_imgui ${IMGUI_GUI_SOURCES} ${IMGUI_SOURCES})
+        # Add ImGui support to CLI executable for --gui flag
+        target_sources(neuromorphic_screens PRIVATE 
+            ${IMGUI_SOURCES}
+            src/visualization/imgui_event_viewer.cpp
+        )
         
-        # Create Streaming application executable
+        # Create consolidated Streaming application executable
         add_executable(neuromorphic_screens_streaming ${STREAMING_SOURCES} ${IMGUI_SOURCES})
         
-        # Include ImGui directories
-        target_include_directories(neuromorphic_screens_imgui PRIVATE 
+        # Include ImGui directories for both executables
+        target_include_directories(neuromorphic_screens PRIVATE 
             "${IMGUI_DIR}"
             "${IMGUI_DIR}/backends"
         )
@@ -124,76 +106,27 @@ if(WIN32)
             "${IMGUI_DIR}/backends"
         )
         
-        # Link ImGui libraries with DirectX 11 backend
-        target_link_libraries(neuromorphic_screens_imgui
-            d3d11
-            dxgi
-            d3dcompiler
-            OpenMP::OpenMP_CXX
-            user32 gdi32 shell32 ole32 uuid comctl32 advapi32
-        )
-        
+        # Link ImGui libraries for streaming application
         target_link_libraries(neuromorphic_screens_streaming
             d3d11
             dxgi
             d3dcompiler
+            d2d1
+            dwrite
+            dwmapi
+            ws2_32
             OpenMP::OpenMP_CXX
             user32 gdi32 shell32 ole32 uuid comctl32 advapi32
         )
         
-        message(STATUS "ImGui GUI applications configured successfully")
+        message(STATUS "ImGui GUI support configured successfully")
         message(STATUS "ImGui path: ${IMGUI_DIR}")
     else()
         message(WARNING "ImGui not found at C:/Program Files/imgui/")
-        message(STATUS "Please ensure ImGui is installed at the expected location")
+        message(STATUS "GUI features will be disabled")
     endif()
 endif()
 
-# Create Direct Overlay application executable (now needs ImGui for controls)
-if(WIN32 AND EXISTS "${IMGUI_DIR}/imgui.cpp")
-    add_executable(neuromorphic_screens_overlay ${OVERLAY_SOURCES} ${IMGUI_SOURCES})
-    
-    # Include ImGui directories for overlay
-    target_include_directories(neuromorphic_screens_overlay PRIVATE 
-        "${IMGUI_DIR}"
-        "${IMGUI_DIR}/backends"
-    )
-    
-    # Link libraries for overlay application
-    target_link_libraries(neuromorphic_screens_overlay
-        d3d11
-        dxgi
-        d3dcompiler
-        d2d1
-        dwrite
-        dwmapi
-        OpenMP::OpenMP_CXX
-        user32 gdi32 shell32 ole32 uuid comctl32 advapi32
-    )
-else()
-    message(WARNING "Cannot build overlay application without ImGui")
-endif()
-
-# Create UDP Event Streamer executable
-add_executable(neuromorphic_screens_udp_streamer ${UDP_STREAMER_SOURCES})
-
-# Link libraries for UDP streamer
-target_link_libraries(neuromorphic_screens_udp_streamer
-    d3d11
-    dxgi
-    d3dcompiler
-    OpenMP::OpenMP_CXX
-)
-
-# Windows-specific libraries and socket support
-if(WIN32)
-    target_link_libraries(neuromorphic_screens_udp_streamer
-        user32 gdi32 shell32 ole32 uuid comctl32 advapi32
-        ws2_32  # Winsock2 for UDP sockets
-    )
-else()
-    # Linux/Unix socket support is built into libc
-endif()
 
 # Add benchmark executable
 add_executable(benchmark_parallelization benchmark_parallelization.cpp src/core/timing.cpp)
@@ -212,12 +145,12 @@ endif()
 
 # Summary of what will be built
 message(STATUS "========== Build Summary ==========")
-message(STATUS "CLI Application: neuromorphic_screens")
-message(STATUS "UDP Event Streamer: neuromorphic_screens_udp_streamer")
+message(STATUS "CLI Application: neuromorphic_screens (includes --gui support)")
 message(STATUS "Benchmark Application: benchmark_parallelization")
-message(STATUS "Overlay Application: neuromorphic_screens_overlay")
 if(WIN32 AND EXISTS "${IMGUI_DIR}/imgui.cpp")
-    message(STATUS "ImGui GUI Application: neuromorphic_screens_imgui")
-    message(STATUS "Streaming Application: neuromorphic_screens_streaming")
+    message(STATUS "Streaming Application: neuromorphic_screens_streaming (consolidated)")
+    message(STATUS "  - Default mode: Real-time streaming with GUI")
+    message(STATUS "  - --overlay: Direct screen overlay")
+    message(STATUS "  - --UDP: UDP event streaming with visualization options")
 endif()
 message(STATUS "======================================")

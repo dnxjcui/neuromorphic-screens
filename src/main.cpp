@@ -9,55 +9,28 @@
 #include "core/timing.h"
 #include "core/event_file.h"
 #include "core/event_file_formats.h"
+#include "core/command_line_parser.h"
 #include "capture/screen_capture.h"
+#include "visualization/imgui_event_viewer.h"
 
 using namespace neuromorphic;
 
-/**
- * Command-line argument parser
- */
-class CommandLineParser {
-private:
-    std::vector<std::string> m_args;
-    
-public:
-    CommandLineParser(int argc, char* argv[]) {
-        for (int i = 1; i < argc; i++) {
-            m_args.push_back(argv[i]);
-        }
-    }
-    
-    bool hasFlag(const std::string& flag) const {
-        for (const auto& arg : m_args) {
-            if (arg == flag) return true;
-        }
-        return false;
-    }
-    
-    std::string getValue(const std::string& flag) const {
-        for (size_t i = 0; i < m_args.size() - 1; i++) {
-            if (m_args[i] == flag) {
-                return m_args[i + 1];
-            }
-        }
-        return "";
-    }
-    
-    void printUsage() const {
-        std::cout << "Neuromorphic Screens - Event-based Screen Capture\n";
-        std::cout << "Usage:\n";
-        std::cout << "  --capture --output <filename> [--duration <seconds>] [--format <aedat|csv|txt>]\n";
-        std::cout << "  --replay --input <filename>\n";
-        std::cout << "  --help\n";
-        std::cout << "\nFor GUI visualization, use:\n";
-        std::cout << "  neuromorphic_screens_imgui.exe --input <filename>\n";
-        std::cout << "\nSupported formats:\n";
-        std::cout << "  aedat  - AEDAT binary format (default, most efficient)\n";
-        std::cout << "  csv    - CSV text format with headers\n";
-        std::cout << "  txt    - Space-separated format (rpg_dvs_ros compatible)\n";
-        std::cout << "\nNote: File capture uses unlimited buffer - all events are saved to file.\n";
-    }
-};
+void printUsage(const std::string& programName) {
+    std::cout << "Neuromorphic Screens - Event-based Screen Capture\n";
+    std::cout << "Usage:\n";
+    std::cout << "  " << programName << " --capture --output <filename> [--duration <seconds>] [--format <aedat|csv|txt>]\n";
+    std::cout << "  " << programName << " --replay --input <filename> [--gui]\n";
+    std::cout << "  " << programName << " --help\n";
+    std::cout << "\nOptions:\n";
+    std::cout << "  --gui                Use ImGui visualization for replay\n";
+    std::cout << "  --duration <seconds> Recording duration (1-60 seconds, default: 5)\n";
+    std::cout << "  --format <format>    Output format: aedat, csv, txt (default: aedat)\n";
+    std::cout << "\nSupported formats:\n";
+    std::cout << "  aedat  - AEDAT binary format (default, most efficient)\n";
+    std::cout << "  csv    - CSV text format with headers\n";
+    std::cout << "  txt    - Space-separated format (rpg_dvs_ros compatible)\n";
+    std::cout << "\nNote: File capture uses unlimited buffer - all events are saved to file.\n";
+}
 
 /**
  * Main application class
@@ -150,7 +123,7 @@ public:
         }
     }
     
-    void replayEvents(const std::string& inputFile) {
+    void replayEvents(const std::string& inputFile, bool useGui = false) {
         std::cout << "Loading events from: " << inputFile << std::endl;
         
         EventStream events;
@@ -178,26 +151,56 @@ public:
         std::cout << "Events/second: " << stats.events_per_second << std::endl;
         std::cout << "Screen dimensions: " << events.width << "x" << events.height << std::endl;
         
-        // Show sample events
-        std::cout << "\nFirst 10 events:" << std::endl;
-        size_t maxEvents = (events.events.size() < 10) ? events.events.size() : 10;
-        for (size_t i = 0; i < maxEvents; i++) {
-            const Event& event = events.events[i];
-            std::cout << "  [" << i << "] t=" << event.timestamp << " x=" << event.x 
-                     << " y=" << event.y << " pol=" << (int)event.polarity << std::endl;
-        }
-        
-        if (events.events.size() > 10) {
-            std::cout << "\nLast 10 events:" << std::endl;
-            for (size_t i = events.events.size() - 10; i < events.events.size(); i++) {
+        if (useGui) {
+            // Launch ImGui visualization
+            std::cout << "\nLaunching ImGui visualization..." << std::endl;
+            
+            try {
+                ImGuiEventViewer viewer;
+                
+                if (!viewer.Initialize("Neuromorphic Event Viewer", 1280, 720)) {
+                    std::cerr << "Failed to initialize ImGui event viewer" << std::endl;
+                    return;
+                }
+                
+                if (!viewer.LoadEvents(inputFile)) {
+                    std::cerr << "Failed to load events in ImGui viewer" << std::endl;
+                    return;
+                }
+                
+                std::cout << "GUI launched successfully! Use Play button for automatic playback." << std::endl;
+                
+                // Main render loop
+                while (viewer.Render()) {
+                    // The render loop handles all events and drawing
+                }
+                
+                std::cout << "ImGui application closed successfully." << std::endl;
+                
+            } catch (const std::exception& e) {
+                std::cerr << "GUI Error: " << e.what() << std::endl;
+            }
+        } else {
+            // Show sample events in console
+            std::cout << "\nFirst 10 events:" << std::endl;
+            size_t maxEvents = (events.events.size() < 10) ? events.events.size() : 10;
+            for (size_t i = 0; i < maxEvents; i++) {
                 const Event& event = events.events[i];
                 std::cout << "  [" << i << "] t=" << event.timestamp << " x=" << event.x 
                          << " y=" << event.y << " pol=" << (int)event.polarity << std::endl;
             }
+            
+            if (events.events.size() > 10) {
+                std::cout << "\nLast 10 events:" << std::endl;
+                for (size_t i = events.events.size() - 10; i < events.events.size(); i++) {
+                    const Event& event = events.events[i];
+                    std::cout << "  [" << i << "] t=" << event.timestamp << " x=" << event.x 
+                             << " y=" << event.y << " pol=" << (int)event.polarity << std::endl;
+                }
+            }
+            
+            std::cout << "\nUse --gui flag for visual playback" << std::endl;
         }
-        
-        std::cout << "\nUse neuromorphic_screens_imgui.exe --input " << inputFile 
-                  << " for visual playback" << std::endl;
     }
 };
 
@@ -209,7 +212,7 @@ int main(int argc, char* argv[]) {
     NeuromorphicApp app;
     
     if (parser.hasFlag("--help") || argc == 1) {
-        parser.printUsage();
+        printUsage(argv[0]);
         return 0;
     }
     
@@ -218,7 +221,7 @@ int main(int argc, char* argv[]) {
             std::string outputFile = parser.getValue("--output");
             if (outputFile.empty()) {
                 std::cerr << "Output file required for capture mode" << std::endl;
-                parser.printUsage();
+                printUsage(argv[0]);
                 return 1;
             }
             
@@ -245,15 +248,16 @@ int main(int argc, char* argv[]) {
             std::string inputFile = parser.getValue("--input");
             if (inputFile.empty()) {
                 std::cerr << "Input file required for replay mode" << std::endl;
-                parser.printUsage();
+                printUsage(argv[0]);
                 return 1;
             }
             
-            app.replayEvents(inputFile);
+            bool useGui = parser.hasFlag("--gui");
+            app.replayEvents(inputFile, useGui);
             
         } else {
             std::cerr << "Unknown command" << std::endl;
-            parser.printUsage();
+            printUsage(argv[0]);
             return 1;
         }
         

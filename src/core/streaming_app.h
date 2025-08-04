@@ -1,9 +1,9 @@
 #pragma once
 
-#include "core/event_types.h"
-#include "core/timing.h"
-#include "core/event_file_formats.h"
-#include "capture/screen_capture.h"
+#include "event_types.h"
+#include "timing.h"
+#include "event_file_formats.h"
+#include "../capture/screen_capture.h"
 #include <atomic>
 #include <thread>
 #include <string>

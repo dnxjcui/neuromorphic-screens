@@ -8,13 +8,18 @@
 #include <vector>
 
 #ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #pragma comment(lib, "ws2_32.lib")
     typedef SOCKET socket_t;
+    typedef struct sockaddr_in sockaddr_in_t;
 #else
     #include <sys/socket.h>
     #include <netinet/in.h>
     typedef int socket_t;
+    typedef struct sockaddr_in sockaddr_in_t;
 #endif
 
 namespace neuromorphic {
@@ -105,8 +110,6 @@ private:
     
     // Event source
     std::function<std::vector<DVSEvent>()> m_eventSource;
-    bool m_simulationMode;
-    uint64_t m_currentTimeUs;  // For simulation
     
     // Threading
     std::atomic<bool> m_isRunning;
@@ -117,10 +120,6 @@ private:
      */
     bool CreateSocket();
     
-    /**
-     * Generate simulated DVS events for testing
-     */
-    std::vector<DVSEvent> GenerateSimulatedEvents();
     
     /**
      * Main streaming thread function
