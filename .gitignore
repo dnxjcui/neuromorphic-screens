@@ -81,3 +81,4 @@ data/*
 palette.png
 !CMakeLists.txt
 *.aedat
+!streaming.md

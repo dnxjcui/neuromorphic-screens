@@ -61,6 +61,14 @@ set(OVERLAY_SOURCES
     ${BASE_SOURCES}
 )
 
+# Source files for UDP Event Streamer application
+set(UDP_STREAMER_SOURCES
+    src/main_udp_streamer.cpp
+    src/streaming_app.cpp
+    src/streaming/udp_event_streamer.cpp
+    ${BASE_SOURCES}
+)
+
 # Create CLI executable
 add_executable(neuromorphic_screens ${CLI_SOURCES})
 
@@ -166,6 +174,27 @@ else()
     message(WARNING "Cannot build overlay application without ImGui")
 endif()
 
+# Create UDP Event Streamer executable
+add_executable(neuromorphic_screens_udp_streamer ${UDP_STREAMER_SOURCES})
+
+# Link libraries for UDP streamer
+target_link_libraries(neuromorphic_screens_udp_streamer
+    d3d11
+    dxgi
+    d3dcompiler
+    OpenMP::OpenMP_CXX
+)
+
+# Windows-specific libraries and socket support
+if(WIN32)
+    target_link_libraries(neuromorphic_screens_udp_streamer
+        user32 gdi32 shell32 ole32 uuid comctl32 advapi32
+        ws2_32  # Winsock2 for UDP sockets
+    )
+else()
+    # Linux/Unix socket support is built into libc
+endif()
+
 # Add benchmark executable
 add_executable(benchmark_parallelization benchmark_parallelization.cpp src/core/timing.cpp)
 
@@ -184,6 +213,7 @@ endif()
 # Summary of what will be built
 message(STATUS "========== Build Summary ==========")
 message(STATUS "CLI Application: neuromorphic_screens")
+message(STATUS "UDP Event Streamer: neuromorphic_screens_udp_streamer")
 message(STATUS "Benchmark Application: benchmark_parallelization")
 message(STATUS "Overlay Application: neuromorphic_screens_overlay")
 if(WIN32 AND EXISTS "${IMGUI_DIR}/imgui.cpp")
