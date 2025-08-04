@@ -40,6 +40,9 @@ private:
     float m_changeThreshold;
     uint32_t m_pixelThreshold; // Threshold for pixel change detection
     
+    // COUT stuff
+    bool verbose;
+    
 
 public:
     ScreenCapture();

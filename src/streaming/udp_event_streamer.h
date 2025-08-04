@@ -26,18 +26,18 @@ namespace neuromorphic {
 
 /**
  * DVS Event structure compatible with event_stream library
+ * Inherits from core Event and adds UDP-specific polarity field
  * Matches event_stream.dvs_dtype: ('t', '<u8'), ('x', '<u2'), ('y', '<u2'), ('on', '?')
  */
 #pragma pack(push, 1)
-struct DVSEvent {
-    uint64_t timestamp;  // Microseconds
-    uint16_t x;          // X coordinate
-    uint16_t y;          // Y coordinate
-    bool polarity;       // True for ON/positive, False for OFF/negative
+struct DVSEvent : public Event {
+    bool on;  // UDP-specific boolean polarity field for event_stream compatibility
     
-    DVSEvent() : timestamp(0), x(0), y(0), polarity(false) {}
+    DVSEvent() : Event(), on(false) {}
     DVSEvent(uint64_t t, uint16_t px, uint16_t py, bool pol) 
-        : timestamp(t), x(px), y(py), polarity(pol) {}
+        : Event(t, px, py, pol ? 1 : 0), on(pol) {}
+    DVSEvent(const Event& event) 
+        : Event(event), on(event.polarity > 0) {}
 };
 #pragma pack(pop)
 
@@ -52,18 +52,22 @@ public:
     ~UdpEventStreamer();
     
     /**
-     * Initialize the streamer with target parameters
+     * Initialize the streamer with target parameters optimized for high throughput
      * @param targetIP Target IP address (default: "127.0.0.1")
      * @param targetPort Target UDP port (default: 9999)
-     * @param eventsPerBatch Number of events per UDP packet (default: 100)
-     * @param eventWidth Event space width for simulation (default: 128)
-     * @param eventHeight Event space height for simulation (default: 128)
+     * @param eventsPerBatch Number of events per UDP packet (default: 1500 for ~20KB packets)
+     * @param eventWidth Event space width (default: 1920)
+     * @param eventHeight Event space height (default: 1080)
+     * @param targetThroughputMBps Target throughput in MB/s (default: 20)
+     * @param maxDropRatio Maximum ratio of events to drop for real-time performance (default: 0.1 = 10%)
      */
     bool Initialize(const std::string& targetIP = "127.0.0.1", 
                    uint16_t targetPort = 9999,
-                   uint32_t eventsPerBatch = 100,
-                   uint16_t eventWidth = 128, 
-                   uint16_t eventHeight = 128);
+                   uint32_t eventsPerBatch = 1500,
+                   uint16_t eventWidth = 1920, 
+                   uint16_t eventHeight = 1080,
+                   float targetThroughputMBps = 20.0f,
+                   float maxDropRatio = 0.1f);
     
     /**
      * Set a custom event source function
@@ -88,13 +92,17 @@ public:
     bool IsRunning() const { return m_isRunning.load(); }
     
     /**
-     * Get current configuration
+     * Get current configuration and performance metrics
      */
     std::string GetTargetIP() const { return m_targetIP; }
     uint16_t GetTargetPort() const { return m_targetPort; }
     uint32_t GetEventsPerBatch() const { return m_eventsPerBatch; }
     uint16_t GetEventWidth() const { return m_eventWidth; }
     uint16_t GetEventHeight() const { return m_eventHeight; }
+    float GetCurrentThroughputMBps() const { return m_currentThroughputMBps; }
+    float GetDropRatio() const { return m_totalEventsDropped > 0 ? (float)m_totalEventsDropped / (m_totalEventsSent + m_totalEventsDropped) : 0.0f; }
+    uint64_t GetTotalEventsSent() const { return m_totalEventsSent; }
+    uint64_t GetTotalEventsDropped() const { return m_totalEventsDropped; }
 
 private:
     // Network configuration
@@ -107,6 +115,14 @@ private:
     uint32_t m_eventsPerBatch;
     uint16_t m_eventWidth;
     uint16_t m_eventHeight;
+    float m_targetThroughputMBps;
+    float m_maxDropRatio;
+    
+    // Performance tracking
+    mutable std::atomic<float> m_currentThroughputMBps;
+    mutable std::atomic<uint64_t> m_totalEventsSent;
+    mutable std::atomic<uint64_t> m_totalEventsDropped;
+    mutable std::atomic<uint64_t> m_totalBytesSent;
     
     // Event source
     std::function<std::vector<DVSEvent>()> m_eventSource;

@@ -48,7 +48,9 @@ void printUsage(const std::string& programName) {
     std::cout << "\nUDP Streaming Options:\n";
     std::cout << "  --ip <address>        Target IP address (default: 127.0.0.1)\n";
     std::cout << "  --port <port>         Target UDP port (default: 9999)\n";
-    std::cout << "  --batch <size>        Events per UDP packet (default: 100)\n";
+    std::cout << "  --batch <size>        Events per UDP packet (default: 1500)\n";
+    std::cout << "  --throughput <mbps>   Target throughput in MB/s (default: 20.0)\n";
+    std::cout << "  --maxdrop <ratio>     Max event drop ratio 0.0-1.0 (default: 0.1)\n";
     std::cout << "  --duration <seconds>  Run for specified duration (default: unlimited)\n";
     std::cout << "  --novis               No visualization (UDP only)\n";
     std::cout << "\nModes:\n";
@@ -201,7 +203,7 @@ public:
         if (targetIP.empty()) targetIP = "127.0.0.1";
         
         int targetPort = parser.getIntValue("--port", 9999);
-        int eventsPerBatch = parser.getIntValue("--batch", 100);
+        int eventsPerBatch = parser.getIntValue("--batch", 1500);
         int durationSeconds = parser.getIntValue("--duration", 0);
         bool noVisualization = parser.hasFlag("--novis");
         bool showOverlay = parser.hasFlag("--overlay");
@@ -241,8 +243,13 @@ public:
         UdpEventStreamer streamer;
         g_udpStreamer = &streamer;
         
+        // Parse additional UDP performance parameters
+        float targetThroughput = parser.getFloatValue("--throughput", 20.0f);
+        float maxDropRatio = parser.getFloatValue("--maxdrop", 0.1f);
+        
         if (!streamer.Initialize(targetIP, static_cast<uint16_t>(targetPort), 
-                               static_cast<uint32_t>(eventsPerBatch), 128, 128)) {
+                               static_cast<uint32_t>(eventsPerBatch), 1920, 1080,
+                               targetThroughput, maxDropRatio)) {
             std::cerr << "Failed to initialize UDP event streamer" << std::endl;
             return 1;
         }
@@ -250,7 +257,7 @@ public:
         // Set up safe event source that uses thread-safe methods
         std::atomic<bool> eventSourceActive(true);
         
-        streamer.SetEventSource([&streamingApp, &eventSourceActive]() -> std::vector<DVSEvent> {
+        streamer.SetEventSource([&streamingApp, &eventSourceActive, &eventsPerBatch]() -> std::vector<DVSEvent> {
             std::vector<DVSEvent> dvsEvents;
             
             // Check if we should still be processing events
@@ -265,25 +272,19 @@ public:
                 
                 if (streamSize > 0) {
                     uint64_t currentTime = HighResTimer::GetMicroseconds();
-                    uint64_t recentThreshold = 200000; // 200ms window for UDP
                     
                     // Get the recent events safely
                     auto eventsCopy = stream.getEventsCopy();
-                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(100)); // Limit to 100 events per call
+                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(eventsPerBatch)); // Limit to 100 events per call
                     
                     for (size_t i = 0; i < eventsToProcess && eventSourceActive.load(); ++i) {
                         const auto& event = eventsCopy[i];
-                        uint64_t eventAbsoluteTime = stream.start_time + event.timestamp;
-                        uint64_t eventAge = currentTime - eventAbsoluteTime;
                         
-                        if (eventAge <= recentThreshold) {
-                            DVSEvent dvsEvent;
-                            dvsEvent.timestamp = eventAbsoluteTime;
-                            dvsEvent.x = event.x;
-                            dvsEvent.y = event.y;
-                            dvsEvent.polarity = (event.polarity > 0);
-                            dvsEvents.push_back(dvsEvent);
-                        }
+                        // Use current time as timestamp and create DVSEvent from core Event
+                        Event timedEvent = event;
+                        timedEvent.timestamp = currentTime;
+                        DVSEvent dvsEvent(timedEvent);
+                        dvsEvents.push_back(dvsEvent);
                     }
                 }
             } catch (const std::exception& e) {

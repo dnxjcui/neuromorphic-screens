@@ -1,306 +1,194 @@
 #!/usr/bin/env python3
 """
-Neuromorphic Event Stream Receiver Test
-Compatible with UDP event streamer from neuromorphic_screens
-
-This script receives DVS events streamed over UDP and displays statistics.
-Designed to work with the C++ UDP event streamer and prepare data for BindsNET integration.
-
-Dependencies:
-    pip install event_stream numpy
-
-Usage:
-    python test_event_receiver.py [--ip IP] [--port PORT] [--duration SECONDS]
+Simple UDP Event Receiver for testing neuromorphic event streams
+Receives and displays neuromorphic events from the C++ UDP event streamer
 """
 
-import argparse
+import socket
+import struct
 import time
-import queue
-import threading
-import numpy as np
 import sys
-from typing import Optional, List, Dict, Any
-
-try:
-    import event_stream
-    HAS_EVENT_STREAM = True
-except ImportError:
-    print("Warning: event_stream library not found.")
-    print("Install with: pip install event_stream")
-    HAS_EVENT_STREAM = False
+import signal
+from collections import defaultdict
 
 class EventReceiver:
-    """
-    Receives and processes neuromorphic events from UDP stream
-    """
-    
-    def __init__(self, ip: str = "127.0.0.1", port: int = 9999):
-        self.ip = ip
+    def __init__(self, port=9999, buffer_size=131072):  # Increased buffer size
         self.port = port
-        self.event_queue = queue.Queue()
+        self.buffer_size = buffer_size
+        self.socket = None
         self.running = False
-        self.consumer_thread: Optional[threading.Thread] = None
-        
-        # Statistics
-        self.total_chunks = 0
-        self.total_events = 0
-        self.start_time = 0
-        self.last_stats_time = 0
-        self.events_since_last_stats = 0
-        
-    def start(self):
-        """Start the event receiver"""
-        if self.running:
-            print("Event receiver already running")
-            return
-            
-        if not HAS_EVENT_STREAM:
-            print("Cannot start receiver: event_stream library not available")
-            return
-            
-        self.running = True
-        self.start_time = time.time()
-        self.last_stats_time = self.start_time
-        
-        # Start consumer thread
-        self.consumer_thread = threading.Thread(
-            target=self._consume_events_to_queue,
-            args=(self.ip, self.port, self.event_queue)
-        )
-        self.consumer_thread.daemon = True
-        self.consumer_thread.start()
-        
-        print(f"Event receiver started, listening on {self.ip}:{self.port}")
-        
-    def stop(self):
-        """Stop the event receiver"""
-        if not self.running:
-            return
-            
-        self.running = False
-        if self.consumer_thread and self.consumer_thread.is_alive():
-            # Signal stop by putting None in queue
-            self.event_queue.put(None)
-            self.consumer_thread.join(timeout=1.0)
-            
-        print("Event receiver stopped")
-        
-    def _consume_events_to_queue(self, ip: str, port: int, output_queue: queue.Queue):
-        """
-        Consumer thread function that receives UDP event streams
-        Compatible with event_stream.UdpDecoder
-        """
-        print(f"Starting UDP decoder for {ip}:{port}")
-        
-        try:
-            # event_stream.UdpDecoder expects each UDP packet to start with uint64 timestamp
-            # followed by DVS event data
-            with event_stream.UdpDecoder(port) as decoder:
-                print(f"UDP Decoder initialized:")
-                print(f"  Type: {getattr(decoder, 'type', 'unknown')}")
-                print(f"  Width: {getattr(decoder, 'width', 'unknown')}")  
-                print(f"  Height: {getattr(decoder, 'height', 'unknown')}")
-                
-                for chunk in decoder:
-                    if not self.running:
-                        break
-                        
-                    # chunk is a numpy array with dtype=event_stream.dvs_dtype
-                    # dtype: [('t', '<u8'), ('x', '<u2'), ('y', '<u2'), ('on', '?')]
-                    if len(chunk) > 0:
-                        output_queue.put(chunk)
-                    else:
-                        # Empty chunk, continue waiting
-                        time.sleep(0.001)
-                        
-        except Exception as e:
-            print(f"Error in UDP decoder: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            output_queue.put(None)  # Signal end of stream
-            
-    def process_events(self, max_duration: float = 0) -> Dict[str, Any]:
-        """
-        Process received events and return statistics
-        
-        Args:
-            max_duration: Maximum time to run (0 = unlimited)
-            
-        Returns:
-            Dictionary with processing statistics
-        """
-        if not self.running:
-            print("Receiver not running")
-            return {}
-            
-        print("Processing events... (Ctrl+C to stop)")
-        
-        try:
-            end_time = time.time() + max_duration if max_duration > 0 else float('inf')
-            
-            while self.running and time.time() < end_time:
-                try:
-                    # Get chunk from queue with timeout
-                    chunk = self.event_queue.get(timeout=1.0)
-                    
-                    if chunk is None:
-                        print("End of event stream detected")
-                        break
-                        
-                    # Process chunk
-                    self._process_chunk(chunk)
-                    
-                except queue.Empty:
-                    # No events received, continue waiting
-                    continue
-                    
-        except KeyboardInterrupt:
-            print("\nProcessing interrupted by user")
-            
-        # Calculate final statistics
-        total_time = time.time() - self.start_time
-        avg_events_per_sec = self.total_events / total_time if total_time > 0 else 0
-        
-        stats = {
-            'total_chunks': self.total_chunks,
-            'total_events': self.total_events,
-            'duration_seconds': total_time,
-            'avg_events_per_second': avg_events_per_sec
+        self.stats = {
+            'packets_received': 0,
+            'events_received': 0,
+            'bytes_received': 0,
+            'start_time': 0,
+            'polarity_counts': defaultdict(int)
         }
         
-        return stats
-        
-    def _process_chunk(self, chunk: np.ndarray):
-        """Process a single chunk of events"""
-        self.total_chunks += 1
-        chunk_size = len(chunk)
-        self.total_events += chunk_size
-        self.events_since_last_stats += chunk_size
-        
-        current_time = time.time()
-        
-        # Print statistics every 5 seconds
-        if current_time - self.last_stats_time >= 5.0:
-            time_elapsed = current_time - self.last_stats_time
-            events_per_sec = self.events_since_last_stats / time_elapsed
+    def start(self):
+        """Start the UDP receiver"""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.bind(('127.0.0.1', self.port))
+            self.socket.settimeout(1.0)  # 1 second timeout for graceful shutdown
+            self.running = True
+            self.stats['start_time'] = time.time()
             
-            # Analyze chunk content
-            if chunk_size > 0:
-                timestamps = chunk['t']
-                x_coords = chunk['x'] 
-                y_coords = chunk['y']
-                polarities = chunk['on']
-                
-                positive_events = np.sum(polarities)
-                negative_events = chunk_size - positive_events
-                
-                print(f"\n--- Event Statistics ---")
-                print(f"Chunks received: {self.total_chunks}")
-                print(f"Total events: {self.total_events}")
-                print(f"Recent events/sec: {events_per_sec:.1f}")
-                print(f"Last chunk: {chunk_size} events")
-                print(f"  Positive events: {positive_events}")
-                print(f"  Negative events: {negative_events}")
-                print(f"  Timestamp range: {timestamps[0]} - {timestamps[-1]} μs")
-                print(f"  X range: {np.min(x_coords)} - {np.max(x_coords)}")
-                print(f"  Y range: {np.min(y_coords)} - {np.max(y_coords)}")
-                
-            self.last_stats_time = current_time
-            self.events_since_last_stats = 0
-
-
-def simulate_receiver_without_event_stream(ip: str, port: int, duration: float):
-    """
-    Fallback receiver using raw sockets when event_stream is not available
-    """
-    import socket
-    import struct
+            print(f"UDP Event Receiver started on port {self.port}")
+            print("Waiting for events from C++ streamer...")
+            print("Use Ctrl+C to stop\n")
+            
+            return True
+        except Exception as e:
+            print(f"Failed to start UDP receiver: {e}")
+            return False
     
-    print(f"Using fallback socket receiver (event_stream not available)")
-    print(f"Listening on {ip}:{port} for {duration} seconds...")
+    def stop(self):
+        """Stop the UDP receiver"""
+        self.running = False
+        if self.socket:
+            self.socket.close()
     
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((ip, port))
-    sock.settimeout(1.0)
-    
-    total_packets = 0
-    total_events = 0
-    start_time = time.time()
-    
-    try:
-        while time.time() - start_time < duration:
-            try:
-                data, addr = sock.recvfrom(4096)
-                total_packets += 1
+    def process_packet(self, data):
+        """Process a received UDP packet"""
+        if len(data) < 8:
+            print(f"Warning: Packet too small ({len(data)} bytes)")
+            return
+        
+        try:
+            # Read packet timestamp (first 8 bytes)
+            packet_timestamp = struct.unpack('<Q', data[:8])[0]
+            
+            # Process events in the packet
+            event_data = data[8:]
+            events_processed = 0
+            
+            # Each DVSEvent is 32 bytes: timestamp(8) + x(4) + y(4) + polarity(1) + on(1) + padding(14)
+            event_size = 32
+            offset = 0
+            
+            while offset + event_size <= len(event_data):
+                event_bytes = event_data[offset:offset + event_size]
                 
-                if len(data) >= 8:  # At least timestamp
-                    # Parse packet timestamp
-                    packet_timestamp = struct.unpack('<Q', data[:8])[0]
+                if len(event_bytes) >= 17:  # Minimum needed: timestamp + x + y + polarity
+                    timestamp = struct.unpack('<Q', event_bytes[0:8])[0]
+                    x = struct.unpack('<I', event_bytes[8:12])[0]
+                    y = struct.unpack('<I', event_bytes[12:16])[0]
+                    polarity = struct.unpack('<B', event_bytes[16:17])[0]
                     
-                    # Calculate number of events (remaining bytes / DVSEvent size)
-                    event_data_size = len(data) - 8
-                    dvs_event_size = 8 + 2 + 2 + 1  # timestamp + x + y + polarity
-                    num_events = event_data_size // dvs_event_size
-                    total_events += num_events
-                    
-                    if total_packets % 50 == 0:
-                        elapsed = time.time() - start_time
-                        print(f"Received {total_packets} packets, {total_events} events "
-                              f"({total_events/elapsed:.1f} events/sec)")
+                    # Validate coordinates
+                    if 0 <= x <= 1920 and 0 <= y <= 1080:
+                        # Update statistics
+                        self.stats['polarity_counts'][polarity] += 1
+                        events_processed += 1
                         
-            except socket.timeout:
-                continue
+                        # Print first few events for debugging
+                        if self.stats['events_received'] < 5:
+                            print(f"Event {self.stats['events_received']}: t={timestamp}, x={x}, y={y}, pol={polarity}")
                 
-    except KeyboardInterrupt:
-        print("\nInterrupted by user")
+                offset += event_size
+            
+            self.stats['events_received'] += events_processed
+            
+            # Print periodic updates
+            if self.stats['packets_received'] % 50 == 0:
+                elapsed = time.time() - self.stats['start_time']
+                packets_per_sec = self.stats['packets_received'] / elapsed if elapsed > 0 else 0
+                events_per_sec = self.stats['events_received'] / elapsed if elapsed > 0 else 0
+                
+                print(f"Packets: {self.stats['packets_received']}, "
+                      f"Events: {self.stats['events_received']}, "
+                      f"Rate: {packets_per_sec:.1f} pkt/s, {events_per_sec:.0f} evt/s")
         
-    finally:
-        sock.close()
+        except struct.error as e:
+            print(f"Struct unpacking error: {e}")
+        except Exception as e:
+            print(f"Error processing packet: {e}")
+    
+    def run(self):
+        """Main receiver loop"""
+        if not self.start():
+            return False
         
-    elapsed = time.time() - start_time
-    print(f"\nFallback receiver results:")
-    print(f"  Packets: {total_packets}")
-    print(f"  Events: {total_events}")
-    print(f"  Duration: {elapsed:.1f}s")
-    print(f"  Avg events/sec: {total_events/elapsed:.1f}")
+        try:
+            while self.running:
+                try:
+                    data, addr = self.socket.recvfrom(self.buffer_size)
+                    self.stats['packets_received'] += 1
+                    self.stats['bytes_received'] += len(data)
+                    
+                    # Process the packet
+                    self.process_packet(data)
+                    
+                except socket.timeout:
+                    # Timeout is normal, continue
+                    continue
+                except Exception as e:
+                    if self.running:
+                        print(f"Error receiving data: {e}")
+                    break
+        
+        except KeyboardInterrupt:
+            print("\nShutdown requested...")
+        
+        finally:
+            self.stop()
+            self.print_final_stats()
+        
+        return True
+    
+    def print_final_stats(self):
+        """Print final statistics"""
+        elapsed = time.time() - self.stats['start_time']
+        
+        print(f"\n=== Final Statistics ===")
+        print(f"Runtime: {elapsed:.1f} seconds")
+        print(f"Packets received: {self.stats['packets_received']}")
+        print(f"Events received: {self.stats['events_received']}")
+        print(f"Bytes received: {self.stats['bytes_received']}")
+        
+        if elapsed > 0:
+            print(f"Average packet rate: {self.stats['packets_received'] / elapsed:.1f} packets/sec")
+            print(f"Average event rate: {self.stats['events_received'] / elapsed:.0f} events/sec")
+            print(f"Average throughput: {self.stats['bytes_received'] / elapsed / 1024:.1f} KB/sec")
+        
+        print(f"\nPolarity distribution:")
+        for polarity, count in sorted(self.stats['polarity_counts'].items()):
+            percentage = (count / self.stats['events_received'] * 100) if self.stats['events_received'] > 0 else 0
+            print(f"  Polarity {polarity}: {count} events ({percentage:.1f}%)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Neuromorphic Event Stream Receiver Test')
-    parser.add_argument('--ip', default='127.0.0.1', help='IP address to listen on (default: 127.0.0.1)')
-    parser.add_argument('--port', type=int, default=9999, help='UDP port to listen on (default: 9999)')
-    parser.add_argument('--duration', type=float, default=0, help='Duration to run in seconds (0 = unlimited)')
-    parser.add_argument('--fallback', action='store_true', help='Use fallback socket receiver')
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='UDP Event Receiver for Neuromorphic Streams')
+    parser.add_argument('--port', type=int, default=9999, 
+                       help='UDP port to listen on (default: 9999)')
+    parser.add_argument('--buffer', type=int, default=131072,
+                       help='UDP receive buffer size (default: 131072)')
     
     args = parser.parse_args()
     
-    print("Neuromorphic Event Stream Receiver Test")
-    print("=" * 40)
+    print("Neuromorphic UDP Event Receiver")
+    print("==============================")
+    print(f"Listening on port: {args.port}")
+    print(f"Buffer size: {args.buffer} bytes")
+    print()
     
-    if args.fallback or not HAS_EVENT_STREAM:
-        if args.duration <= 0:
-            args.duration = 30  # Default to 30 seconds for fallback
-        simulate_receiver_without_event_stream(args.ip, args.port, args.duration)
-        return
+    receiver = EventReceiver(args.port, args.buffer)
     
-    # Use event_stream library
-    receiver = EventReceiver(args.ip, args.port)
-    
-    try:
-        receiver.start()
-        stats = receiver.process_events(args.duration)
-        
-        print("\n" + "=" * 40)
-        print("Final Statistics:")
-        print(f"  Total chunks: {stats.get('total_chunks', 0)}")
-        print(f"  Total events: {stats.get('total_events', 0)}")  
-        print(f"  Duration: {stats.get('duration_seconds', 0):.2f} seconds")
-        print(f"  Average events/sec: {stats.get('avg_events_per_second', 0):.1f}")
-        
-    finally:
+    # Set up signal handler for graceful shutdown
+    def signal_handler(sig, frame):
+        print("\nReceived interrupt signal")
         receiver.stop()
-
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Run the receiver
+    success = receiver.run()
+    
+    return 0 if success else 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

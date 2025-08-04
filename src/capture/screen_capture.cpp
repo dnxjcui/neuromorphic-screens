@@ -22,7 +22,8 @@ ScreenCapture::ScreenCapture()
     , m_captureActive(false)
     , m_firstFrame(true)
     , m_changeThreshold(0.15f)  // 15% threshold - sensitive enough for mouse movement
-    , m_pixelThreshold(38) {    // 38/255 ≈ 15%
+    , m_pixelThreshold(38) // 38/255 ≈ 15%
+    , verbose(false) {    
 }
 
 ScreenCapture::~ScreenCapture() {
@@ -371,7 +372,7 @@ void ScreenCapture::ComparePixels(EventStream& events, uint64_t timestamp, float
     }
     
     // Debug output to see if events are generated
-    if (frameEvents.size() > 0) {
+    if (frameEvents.size() > 0 && this->verbose) {
         std::cout << "\nGenerated " << frameEvents.size() << " events";
     }
 }
