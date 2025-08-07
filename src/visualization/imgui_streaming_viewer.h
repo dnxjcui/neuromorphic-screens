@@ -89,6 +89,10 @@ private:
     uint32_t m_canvasHeight;
     bool m_showStats;
     bool m_showControls;
+
+    // For EPS
+    uint64_t m_lastSecondEvents;
+    uint64_t m_lastSecondTimestamp;
     
     // Visualization options
     bool m_useDimming;           // Enable gradual dimming instead of instant removal

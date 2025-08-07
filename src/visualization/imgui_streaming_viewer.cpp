@@ -18,7 +18,8 @@ ImGuiStreamingViewer::ImGuiStreamingViewer(const std::string& title, StreamingAp
       m_canvasWidth(800), m_canvasHeight(600),
       m_threadRunning(false), m_showStats(true), m_showControls(true),
       m_useDimming(true), m_dimmingRate(1.0f),
-      m_temporalIndex(100000, 10000) {  // 100ms time window, max 10000 recent events
+      m_temporalIndex(100000, 10000), // 100ms time window, max 10000 recent events
+      m_lastSecondEvents(0), m_lastSecondTimestamp(HighResTimer::GetMicroseconds()) {  
     ZeroMemory(&m_wc, sizeof(m_wc));
 }
 
@@ -412,8 +413,15 @@ void ImGuiStreamingViewer::RenderStatsPanel() {
             uint64_t currentTime = HighResTimer::GetMicroseconds();
             uint64_t streamingDuration = currentTime - stream.start_time;
             float durationSeconds = static_cast<float>(streamingDuration) / 1000000.0f;
-            float eventsPerSecond = stream.total_events_generated / (durationSeconds > 1.0f ? durationSeconds : 1.0f);
-            
+            // float eventsPerSecond = stream.total_events_generated / (durationSeconds > 1.0f ? durationSeconds : 1.0f);
+
+            // calculate events per second past second
+            uint64_t eventsPastSecond = stream.total_events_generated - m_lastSecondEvents;
+
+            float eventsPerSecond = eventsPastSecond / (durationSeconds > 1.0f ? durationSeconds : 1.0f);
+            m_lastSecondEvents = stream.total_events_generated;
+            m_lastSecondTimestamp = currentTime;
+
             ImGui::Text("Duration: %.1fs", durationSeconds);
             ImGui::Text("Events/sec: %.0f", eventsPerSecond);
         }
