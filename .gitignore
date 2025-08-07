@@ -82,3 +82,5 @@ palette.png
 !CMakeLists.txt
 *.aedat
 !streaming.md
+*.ini
+nul
