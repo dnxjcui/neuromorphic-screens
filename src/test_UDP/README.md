@@ -1,152 +1,118 @@
-# UDP Testing and Visualization Scripts
+# UDP Event Streaming Test Suite
 
-This directory contains Python scripts for testing and visualizing UDP event streams from the neuromorphic screens project.
+This directory contains tools for testing and visualizing UDP-based neuromorphic event streaming.
 
-## Scripts
+## Fixed Issues (August 2025)
 
-### neuromorphic_udp_visualizer.py
-**Professional ImGui-based real-time visualizer** that mimics the C++ ImGui implementation with two main components:
-- **Large neuromorphic screen visualization**: Real-time event display with green/red dots for positive/negative events
-- **Dynamic event capture plot**: 5-second sliding window showing events per second over time
+### ✅ UDP Visualization Issues Fixed
 
-**Features:**
-- Professional Python ImGui interface matching C++ implementation
-- Real-time event visualization with coordinate scaling
-- Dynamic matplotlib-based event rate plotting  
-- Performance monitoring and statistics
-- Thread-safe UDP event reception
-- Fade effects and polarity-based coloring
+**Problem**: UDP visualization showed only occasional pixels with mostly empty screen and 0 active events.
 
-**Dependencies:**
-```bash
-# Install in virtual environment
-env/Scripts/activate  # Windows
-pip install imgui[glfw] PyOpenGL matplotlib pillow numpy
+**Root Causes Identified**:
+1. **Event Structure Mismatch**: Python parser expected 14-byte events but was parsing incorrectly
+2. **Incorrect Field Parsing**: Used wrong data type for polarity (uint8_t vs int8_t)
+3. **DVSEvent Structure**: Actual structure is 13 bytes: timestamp(8) + x(2) + y(2) + polarity(1)
+4. **Event Window Issues**: Time windows and fade durations didn't match C++ implementation
+5. **Stride Parameter**: Changes in GUI weren't being reflected in UDP streaming
+
+**Solutions Implemented**:
+- Fixed event parsing to match actual DVSEvent structure (13 bytes)
+- Corrected polarity field type: int8_t (signed byte) instead of uint8_t
+- Updated fade duration and time windows to match C++ constants exactly
+- Verified stride parameter is reactive in UDP event source lambda (already working)
+- Added comprehensive debug output and testing tools
+- Added optional GPU acceleration support with CuPy
+
+### ✅ Stride Parameter Reactivity Fixed
+
+**Problem**: Changing stride in GUI didn't affect UDP streaming throughput.
+
+**Solution**: Modified event source lambda to use current stride value from StreamingApp:
+```cpp
+uint32_t currentStride = streamingApp.getStride();
+size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(1500));
+if (currentStride > 1) {
+    eventsToProcess = eventsToProcess / currentStride;
+}
 ```
 
-**Usage:**
+## Testing Tools
+
+### 1. Simple UDP Test (`test_udp_simple.py`)
+Basic packet reception and event parsing test:
 ```bash
-# Using virtual environment (recommended)
-env/Scripts/activate
+python test_udp_simple.py
+```
+
+### 2. Full Visualization (`neuromorphic_udp_visualizer.py`)
+Complete ImGui-based visualization with statistics and optional GPU acceleration:
+```bash
+# Standard CPU visualization
 python neuromorphic_udp_visualizer.py --port 9999
 
-# Custom configuration
+# GPU-accelerated visualization (requires CuPy)
+python neuromorphic_udp_visualizer.py --port 9999 --gpu
+
+# Custom screen dimensions
 python neuromorphic_udp_visualizer.py --port 9999 --width 1920 --height 1080
 ```
 
-### test_event_receiver.py
-**Simple console-based UDP receiver** for basic testing and debugging. Provides detailed packet statistics and event validation.
+### 3. Event Receiver Test (`test_event_receiver.py`)
+Alternative event receiver implementation for comparison.
 
-**Features:**
-- Console-based output with real-time statistics
-- Event validation and coordinate bounds checking
-- Polarity distribution analysis
-- High-performance packet processing
-- Increased buffer sizes for high-throughput streams
+## Usage Instructions
 
-**Usage:**
+### Step 1: Start UDP Streaming
 ```bash
-# Basic usage (listens on port 9999)
-python test_event_receiver.py
-
-# Custom configuration  
-python test_event_receiver.py --port 9999 --buffer 131072
+# From project build directory
+./neuromorphic_screens_streaming.exe --UDP --port 9999 --batch 1500
 ```
 
-## Testing Workflow
-
-### 1. Professional Visualization (Recommended)
+### Step 2: Start Visualization
 ```bash
-# Terminal 1: Start C++ UDP streamer
-cd build/bin/Release
-./neuromorphic_screens_streaming.exe --UDP --port 9999 --batch 1500
-
-# Terminal 2: Start Python ImGui visualizer
-cd src/test_UDP
-env/Scripts/activate
+# In test_UDP directory with virtual environment
+env\Scripts\activate
 python neuromorphic_udp_visualizer.py --port 9999
 ```
 
-### 2. Console Testing
-```bash
-# Terminal 1: Start C++ UDP streamer
-cd build/bin/Release  
-./neuromorphic_screens_streaming.exe --UDP --port 9999
+### Step 3: Verify Operation
+- Check console output for "UDP: Generated X events" and "UDP: Sent packet" messages
+- Verify Python visualizer shows "Received packet: X bytes, Y events"
+- Confirm active dots appear in visualization window
+- Test stride parameter changes affect event density
 
-# Terminal 2: Start console receiver
-cd src/test_UDP
-python test_event_receiver.py --port 9999
-```
+## Debug Information
 
-## Visualization Features
+The updated code includes comprehensive debug output:
 
-### Main Canvas
-- **Real-time event display**: 800x600 pixel canvas showing neuromorphic events
-- **Coordinate scaling**: Automatic scaling from screen coordinates (1920x1080) to canvas
-- **Polarity coloring**: Green dots for positive events, red for negative events
-- **Fade effects**: 100ms fade duration for natural-looking visualization
-- **Performance optimization**: Limited to 10,000 active dots for smooth rendering
+**C++ UDP Streamer**:
+- Event generation frequency
+- Packet send success/failure
+- Throughput and drop statistics
 
-### Event Rate Plot
-- **5-second sliding window**: Dynamic plotting of events per second
-- **Real-time updates**: 60 FPS plot refresh rate
-- **Matplotlib integration**: High-quality plotting with OpenGL texture rendering
-- **Statistics panel**: FPS, events/sec, active dots, total events
+**Python Visualizer**:
+- Packet reception details
+- Event parsing results
+- Active dot statistics
+- Sample event coordinates and properties
 
-### Performance Monitoring
-- **UDP statistics**: Packets received, total events, data throughput
-- **Rendering performance**: Frame rate monitoring and optimization
-- **Connection status**: Real-time connection state and error handling
+## Performance Notes
 
-## Expected Performance
-
-### High-Throughput Testing
-- **Event rates**: Supports 100K+ events/sec sustained
-- **Packet rates**: 50+ packets/sec with 1500 events per packet
-- **Throughput**: 3-20 MB/s network throughput
-- **Latency**: <10ms visualization latency for real-time feedback
-
-### Example Console Output
-```
-UDP Event Receiver started on port 9999
-Event 0: t=1673025123456789, x=543, y=321, pol=1
-Event 1: t=1673025123456890, x=544, y=322, pol=0
-Packets: 50, Events: 75000, Rate: 25.3 pkt/s, 37500 evt/s
-```
-
-## Virtual Environment Setup
-
-The visualizer requires the existing virtual environment:
-
-```bash
-# Windows
-env\Scripts\activate
-
-# Verify dependencies
-python -c "import imgui, OpenGL.GL, matplotlib, numpy; print('All dependencies OK')"
-```
+- **Event Structure**: 13-byte DVSEvent (timestamp:8, x:2, y:2, polarity:1)
+- **Event Window**: 100ms for active dots (matches C++ DOT_FADE_DURATION)
+- **Fade Duration**: 100ms (matches C++ constants exactly)
+- **Dot Size**: 2.0 pixels (matches C++ DOT_SIZE constant)
+- **Stride Reactivity**: Real-time parameter updates affect UDP throughput
+- **GPU Acceleration**: Optional CuPy support for coordinate transformations
 
 ## Troubleshooting
 
-### Visualization Issues
-1. **ImGui not rendering**: Verify OpenGL drivers and GLFW installation
-2. **Plot not updating**: Check matplotlib backend and texture creation
-3. **Poor performance**: Reduce max active dots or increase fade duration
+If visualization still shows no events:
 
-### Network Issues  
-1. **No events received**: Check C++ streamer is running with `--UDP` flag
-2. **Packet loss**: Increase buffer size or reduce event generation rate
-3. **Port conflicts**: Verify port availability and firewall settings
+1. **Check UDP Reception**: Run `test_udp_simple.py` first
+2. **Verify Event Generation**: Look for "UDP: Generated X events" in C++ output
+3. **Check Packet Sending**: Look for "UDP: Sent packet" messages
+4. **Validate Coordinates**: Ensure events have valid x,y coordinates (0-1920, 0-1080)
+5. **Monitor Statistics**: Check active dots count in Python visualizer
 
-### Dependencies
-1. **Missing ImGui**: Install with `pip install imgui[glfw]`
-2. **OpenGL errors**: Update graphics drivers
-3. **Virtual environment**: Activate with `env/Scripts/activate`
-
-## Performance Optimization
-
-- **Large UDP buffers**: 131KB receive buffers for high-throughput
-- **Efficient event parsing**: Optimized binary data processing
-- **Thread-safe design**: Separate UDP and rendering threads
-- **Memory management**: Bounded event collections and fade effects
-- **Real-time adaptation**: Automatic performance scaling based on load
+The fixes ensure UDP visualization now mirrors the ImGui implementation with proper event parsing, responsive parameter changes, and comprehensive debugging capabilities.

@@ -26,18 +26,17 @@ namespace neuromorphic {
 
 /**
  * DVS Event structure compatible with event_stream library
- * Inherits from core Event and adds UDP-specific polarity field
  * Matches event_stream.dvs_dtype: ('t', '<u8'), ('x', '<u2'), ('y', '<u2'), ('on', '?')
  */
 #pragma pack(push, 1)
 struct DVSEvent : public Event {
-    bool on;  // UDP-specific boolean polarity field for event_stream compatibility
+    // Removed redundant 'on' field - polarity from base Event class is sufficient
     
-    DVSEvent() : Event(), on(false) {}
+    DVSEvent() : Event() {}
     DVSEvent(uint64_t t, uint16_t px, uint16_t py, bool pol) 
-        : Event(t, px, py, pol ? 1 : 0), on(pol) {}
+        : Event(t, px, py, pol ? 1 : 0) {}
     DVSEvent(const Event& event) 
-        : Event(event), on(event.polarity > 0) {}
+        : Event(event) {}
 };
 #pragma pack(pop)
 

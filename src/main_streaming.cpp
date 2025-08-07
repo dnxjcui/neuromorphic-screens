@@ -257,7 +257,7 @@ public:
         // Set up safe event source that uses thread-safe methods
         std::atomic<bool> eventSourceActive(true);
         
-        streamer.SetEventSource([&streamingApp, &eventSourceActive, &eventsPerBatch]() -> std::vector<DVSEvent> {
+        streamer.SetEventSource([&streamingApp, &eventSourceActive]() -> std::vector<DVSEvent> {
             std::vector<DVSEvent> dvsEvents;
             
             // Check if we should still be processing events
@@ -275,7 +275,15 @@ public:
                     
                     // Get the recent events safely
                     auto eventsCopy = stream.getEventsCopy();
-                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(eventsPerBatch)); // Limit to 100 events per call
+                    
+                    // Use current stride value from StreamingApp to control event density
+                    uint32_t currentStride = streamingApp.getStride();
+                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(1500)); // Base limit
+                    
+                    // Apply stride-based filtering to reduce event density when stride > 1
+                    if (currentStride > 1) {
+                        eventsToProcess = eventsToProcess / currentStride;
+                    }
                     
                     for (size_t i = 0; i < eventsToProcess && eventSourceActive.load(); ++i) {
                         const auto& event = eventsCopy[i];

@@ -183,6 +183,12 @@ void UdpEventStreamer::StreamingThreadFunction() {
                 std::this_thread::sleep_for(std::chrono::microseconds(50));
                 continue;
             }
+            
+            // Debug output for event generation
+            static int debugCounter = 0;
+            if (++debugCounter % 100 == 0) {  // Print every 100th call
+                std::cout << "UDP: Generated " << events.size() << " events" << std::endl;
+            }
         } else {
             std::cerr << "No event source configured!" << std::endl;
             break;
@@ -269,6 +275,12 @@ void UdpEventStreamer::StreamingThreadFunction() {
                 packetsSent++;
                 m_totalEventsSent.fetch_add(eventsInThisPacket);
                 m_totalBytesSent.fetch_add(actualPacketSize);
+                
+                // Debug output for successful sends
+                static int sendCounter = 0;
+                if (++sendCounter % 50 == 0) {  // Print every 50th successful send
+                    std::cout << "UDP: Sent packet with " << eventsInThisPacket << " events (" << actualPacketSize << " bytes)" << std::endl;
+                }
             } else {
                 // Drop failed packet events for real-time performance
                 m_totalEventsDropped.fetch_add(eventsInThisPacket);
