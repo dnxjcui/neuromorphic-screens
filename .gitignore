@@ -84,3 +84,4 @@ palette.png
 !streaming.md
 *.ini
 nul
+env/**
