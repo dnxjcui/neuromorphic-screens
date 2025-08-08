@@ -278,12 +278,13 @@ public:
                     
                     // Use current stride value from StreamingApp to control event density
                     uint32_t currentStride = streamingApp.getStride();
-                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(1500)); // Base limit
+                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(10000)); // Base limit (??)
+                    // size_t eventsToProcess = eventsCopy.size();
                     
                     // Apply stride-based filtering to reduce event density when stride > 1
-                    if (currentStride > 1) {
-                        eventsToProcess = eventsToProcess / currentStride;
-                    }
+                    // if (currentStride > 1) {
+                    //     eventsToProcess = eventsToProcess / currentStride;
+                    // }
                     
                     for (size_t i = 0; i < eventsToProcess && eventSourceActive.load(); ++i) {
                         const auto& event = eventsCopy[i];

@@ -18,7 +18,7 @@ namespace constants {
     constexpr float REPLAY_FPS = 60.0f;           // 60 FPS target for replay
     constexpr uint64_t FRAME_TIMEOUT_MS = 16;     // 16ms frame timeout
     constexpr uint32_t MAX_EVENTS_PER_FRAME = 100000; // Safety limit for events per frame
-    constexpr size_t MAX_EVENT_CONTEXT_WINDOW = 1000000; // Maximum events in rolling buffer (for streaming/overlay)
+    constexpr size_t MAX_EVENT_CONTEXT_WINDOW = 100000; // Maximum events in rolling buffer (for streaming/overlay)
     constexpr size_t UNLIMITED_BUFFER = SIZE_MAX; // Unlimited buffer for file capture
 }
 

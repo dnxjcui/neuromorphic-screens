@@ -31,11 +31,31 @@ from joblib import Parallel, delayed
 
 try:
     import cupy as cp
+    import numpy as np
     GPU_AVAILABLE = True
+    GPU_BACKEND = "cupy"
     print("GPU support available with CuPy")
 except ImportError:
-    GPU_AVAILABLE = False
-    print("GPU support not available (CuPy not installed)")
+    try:
+        import torch
+        import numpy as np
+        GPU_AVAILABLE = torch.cuda.is_available()
+        GPU_BACKEND = "pytorch" if GPU_AVAILABLE else None
+        if GPU_AVAILABLE:
+            print(f"GPU support available with PyTorch (CUDA device: {torch.cuda.get_device_name()})")
+        else:
+            print("PyTorch available but no CUDA device found")
+    except ImportError:
+        GPU_AVAILABLE = False
+        GPU_BACKEND = None
+        print("GPU support not available (neither CuPy nor PyTorch with CUDA found)")
+
+try:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    PARALLEL_AVAILABLE = True
+except ImportError:
+    PARALLEL_AVAILABLE = False
 
 
 # Constants matching C++ implementation
@@ -76,25 +96,45 @@ class EventData:
 
 class UDPEventReceiver:
     """High-performance UDP receiver for neuromorphic events"""
-    def __init__(self, port=9999, buffer_size=1024 * 1024 * 20):  # 20MB buffer
+    def __init__(self, port=9999, buffer_size=20 * 1024 * 1024):  
         self.port = port
         self.buffer_size = buffer_size
         self.socket = None
         self.running = False
         self.event_data = EventData()
         self.thread = None
+        self.last_buffer_clear = time.time()
+        self.buffer_clear_interval = 0.01  # Clear buffer every 10ms aggressively to prevent latency buildup
+        self.last_stats_time = time.time()
+        self.stats_interval = 2.0  # Print stats every 2 seconds like C++
+        self.packet_latencies = []  # Track packet processing latencies
+        self.max_latency_samples = 100
+        self.last_throughput_time = time.time()
+        self.last_throughput_bytes = 0
+        self.current_throughput_mbps = 0.0
         
     def start(self):
         """Start UDP receiver thread"""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            
+            # Set socket options to prevent buffer buildup
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self.buffer_size)
+            
+            # Try to get actual buffer size for monitoring
+            actual_buffer_size = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+            print(f"Socket buffer size: requested {self.buffer_size / (1024*1024):.1f} MB, actual {actual_buffer_size / (1024*1024):.1f} MB")
+            
             self.socket.bind(('127.0.0.1', self.port))
-            self.socket.settimeout(1.0)
+            self.socket.settimeout(0.05)  # Shorter timeout for more responsive buffer clearing
             self.running = True
             
             self.thread = threading.Thread(target=self._receive_loop, daemon=True)
             self.thread.start()
+            self.start_time = time.time()  # Track start time for performance stats
             print(f"UDP receiver started on port {self.port}")
+            print(f"Buffer size: {self.buffer_size / (1024*1024):.1f} MB")
+            print("Starting high-throughput event reception...")
             return True
         except Exception as e:
             print(f"Failed to start UDP receiver: {e}")
@@ -110,15 +150,40 @@ class UDPEventReceiver:
         print("UDP receiver stopped")
     
     def _receive_loop(self):
-        """Main UDP receiving loop"""
+        """Main UDP receiving loop with periodic buffer clearing"""
+        packets_in_interval = 0
+        
         while self.running:
             try:
                 data, addr = self.socket.recvfrom(self.buffer_size)
                 self._process_packet(data)
                 self.event_data.stats['packets'] += 1
                 self.event_data.stats['bytes'] += len(data)
+                packets_in_interval += 1
+                
+                # Update throughput calculation like C++ (every 100ms)
+                current_time = time.time()
+                if current_time - self.last_throughput_time >= 0.1:  # Every 100ms like C++
+                    current_bytes = self.event_data.stats['bytes']
+                    bytes_delta = current_bytes - self.last_throughput_bytes
+                    self.current_throughput_mbps = (bytes_delta * 10.0) / (1024 * 1024)  # MB/s
+                    self.last_throughput_time = current_time
+                    self.last_throughput_bytes = current_bytes
+                
+                # Immediate buffer clearing after EVERY packet to prevent any buildup
+                if current_time - self.last_buffer_clear >= self.buffer_clear_interval:
+                    self._clear_socket_buffer()
+                    self.last_buffer_clear = current_time
                 
             except socket.timeout:
+                # Use timeout to periodically clear socket buffer if packets are backing up
+                current_time = time.time()
+                if current_time - self.last_buffer_clear >= self.buffer_clear_interval:
+                    self._clear_socket_buffer()
+                    self.last_buffer_clear = current_time
+                    if packets_in_interval > 0:
+                        # Only print if we actually received packets
+                        packets_in_interval = 0
                 continue
             except Exception as e:
                 if self.running:
@@ -127,12 +192,20 @@ class UDPEventReceiver:
     
     def _process_packet(self, data):
         """Process received UDP packet containing DVS events"""
+        packet_receive_time = time.time()
+        
         if len(data) < 8:  # Need at least timestamp
             return
         
         try:
             # Extract packet timestamp (first 8 bytes)
             packet_timestamp = struct.unpack('<Q', data[:8])[0]
+            
+            # Calculate packet latency (timestamp is in microseconds)
+            packet_latency = (packet_receive_time * 1000000) - packet_timestamp
+            if len(self.packet_latencies) >= self.max_latency_samples:
+                self.packet_latencies.pop(0)
+            self.packet_latencies.append(packet_latency)
             
             # Extract events (remaining data)
             event_data = data[8:]
@@ -141,9 +214,9 @@ class UDPEventReceiver:
             
             num_events = len(event_data) // event_size
             
-            # Debug output for packet analysis (much less frequent)
-            if num_events > 0 and self.event_data.stats['packets'] % 500 == 0:
-                print(f"Received packet: {len(data)} bytes, {num_events} events")
+            # Debug output similar to C++ (less frequent)
+            if num_events > 0 and self.event_data.stats['packets'] % 50 == 0:
+                print(f"UDP: Received packet with {num_events} events ({len(data)} bytes)")
             
             # Process events in batch for better performance
             events_to_add = []
@@ -174,11 +247,89 @@ class UDPEventReceiver:
                             'received_time': current_time
                         })
                     self.event_data.stats['events'] += len(events_to_add)
+            
+            # Print performance statistics like C++ (every 2 seconds)
+            current_time = time.time()
+            if current_time - self.last_stats_time >= self.stats_interval:
+                self._print_performance_stats()
+                self.last_stats_time = current_time
+
+            self._packet_counter = getattr(self, '_packet_counter', 0) + 1
+            if self._packet_counter == 100:
+                with open("udp_packet_100_received.bin", "wb") as f:
+                    f.write(data)
+
                             
         except struct.error as e:
             print(f"Packet parsing error: {e}")
         except Exception as e:
             print(f"Unexpected error processing packet: {e}")
+    
+    def _clear_socket_buffer(self):
+        """Aggressively clear any backed up packets in socket buffer to prevent latency buildup"""
+        try:
+            cleared_count = 0
+            cleared_bytes = 0
+            # Drain ALL backed up packets with non-blocking calls - no limits for real-time
+            self.socket.setblocking(False)
+            start_time = time.time()
+            
+            while True:
+                try:
+                    data, addr = self.socket.recvfrom(self.buffer_size)
+                    cleared_count += 1
+                    cleared_bytes += len(data)
+                    
+                    # Only break if we've been clearing for more than 50ms to prevent infinite loop
+                    if time.time() - start_time > 0.05:
+                        break
+                        
+                except BlockingIOError:
+                    break
+                    
+            self.socket.setblocking(True) 
+            self.socket.settimeout(0.01)  # Much shorter timeout for more responsive clearing
+            
+            if cleared_count > 0:
+                print(f"AGGRESSIVE CLEAR: Dropped {cleared_count} backed up packets ({cleared_bytes/1024:.1f} KB) to prevent latency")
+                # Reset our stats since we just dropped a lot of data
+                self.last_stats_time = time.time()
+                
+        except Exception as e:
+            # Re-enable blocking mode even if there's an error
+            try:
+                self.socket.setblocking(True)
+                self.socket.settimeout(0.01)
+            except:
+                pass
+    
+    def _print_performance_stats(self):
+        """Print performance statistics matching C++ UDP streaming output format"""
+        current_time = time.time()
+        duration = current_time - (hasattr(self, 'start_time') and self.start_time or current_time)
+        
+        total_packets = self.event_data.stats['packets']
+        total_events = self.event_data.stats['events']
+        total_bytes = self.event_data.stats['bytes']
+        
+        if duration > 0:
+            events_per_sec = total_events / duration
+            throughput_mbps = (total_bytes / (1024 * 1024)) / duration
+            
+            # Calculate latency stats
+            avg_latency = 0
+            max_latency = 0
+            if self.packet_latencies:
+                avg_latency = sum(self.packet_latencies) / len(self.packet_latencies)
+                max_latency = max(self.packet_latencies)
+            
+            print(f"\n=== Python UDP Receiver Performance ===")
+            print(f"Events/sec: {events_per_sec:.0f} | Packets: {total_packets}")
+            print(f"Throughput: {self.current_throughput_mbps:.2f} MB/s (windowed) | Avg: {throughput_mbps:.2f} MB/s")
+            print(f"Events processed: {total_events} | Bytes: {total_bytes / 1024:.1f} KB")
+            print(f"Latency: avg {avg_latency/1000:.1f}ms | max {max_latency/1000:.1f}ms")
+        else:
+            print(f"Python UDP Receiver: {total_events} events, packets: {total_packets}")
 
 
 class NeuromorphicVisualizer:
@@ -231,76 +382,169 @@ class NeuromorphicVisualizer:
             return (screen_x, screen_y)
     
     def screen_to_canvas_batch_gpu(self, events):
-        """GPU-accelerated batch coordinate transformation"""
+        """Enhanced GPU-accelerated batch processing with CuPy or PyTorch"""
         if not self.use_gpu or not events:
             return events
         
         try:
-            # Extract coordinates
-            coords = [(e['x'], e['y']) for e in events]
-            coords_gpu = cp.array(coords, dtype=cp.float32)
+            # Extract all event data for GPU processing
+            coords = np.array([(e['x'], e['y']) for e in events], dtype=np.float32)
+            alphas = np.array([e.get('alpha', 1.0) for e in events], dtype=np.float32)
+            polarities = np.array([e['polarity'] for e in events], dtype=np.int8)
             
-            # Apply scaling
-            scale_x = float(self.canvas_width) / float(self.screen_width)
-            scale_y = float(self.canvas_height) / float(self.screen_height)
-            coords_gpu[:, 0] *= scale_x
-            coords_gpu[:, 1] *= scale_y
+            if GPU_BACKEND == "cupy":
+                # CuPy implementation
+                coords_gpu = cp.asarray(coords)
+                alphas_gpu = cp.asarray(alphas)
+                polarities_gpu = cp.asarray(polarities)
+                
+                # GPU coordinate transformation
+                scale_x = float(self.canvas_width) / float(self.screen_width)
+                scale_y = float(self.canvas_height) / float(self.screen_height)
+                coords_gpu[:, 0] *= scale_x
+                coords_gpu[:, 1] *= scale_y
+                
+                # GPU alpha fade calculations
+                current_time = time.time()
+                if hasattr(self, 'last_gpu_time'):
+                    dt = current_time - self.last_gpu_time
+                    alphas_gpu = cp.maximum(0.0, alphas_gpu - dt / DOT_FADE_DURATION)
+                self.last_gpu_time = current_time
+                
+                # GPU filtering for bounds checking
+                valid_mask = ((coords_gpu[:, 0] >= 0) & (coords_gpu[:, 0] < self.canvas_width) & 
+                             (coords_gpu[:, 1] >= 0) & (coords_gpu[:, 1] < self.canvas_height) &
+                             (alphas_gpu > 0.01))
+                
+                # Filter events on GPU
+                coords_filtered = coords_gpu[valid_mask]
+                alphas_filtered = alphas_gpu[valid_mask]
+                polarities_filtered = polarities_gpu[valid_mask]
+                
+                # Move back to CPU
+                coords_cpu = cp.asnumpy(coords_filtered)
+                alphas_cpu = cp.asnumpy(alphas_filtered)
+                polarities_cpu = cp.asnumpy(polarities_filtered)
+                
+            elif GPU_BACKEND == "pytorch":
+                # PyTorch implementation
+                coords_gpu = torch.from_numpy(coords).cuda()
+                alphas_gpu = torch.from_numpy(alphas).cuda()
+                polarities_gpu = torch.from_numpy(polarities).cuda()
+                
+                # GPU coordinate transformation
+                scale_x = float(self.canvas_width) / float(self.screen_width)
+                scale_y = float(self.canvas_height) / float(self.screen_height)
+                coords_gpu[:, 0] *= scale_x
+                coords_gpu[:, 1] *= scale_y
+                
+                # GPU alpha fade calculations
+                current_time = time.time()
+                if hasattr(self, 'last_gpu_time'):
+                    dt = current_time - self.last_gpu_time
+                    alphas_gpu = torch.clamp(alphas_gpu - dt / DOT_FADE_DURATION, min=0.0)
+                self.last_gpu_time = current_time
+                
+                # GPU filtering for bounds checking
+                valid_mask = ((coords_gpu[:, 0] >= 0) & (coords_gpu[:, 0] < self.canvas_width) & 
+                             (coords_gpu[:, 1] >= 0) & (coords_gpu[:, 1] < self.canvas_height) &
+                             (alphas_gpu > 0.01))
+                
+                # Filter events on GPU
+                coords_filtered = coords_gpu[valid_mask]
+                alphas_filtered = alphas_gpu[valid_mask]
+                polarities_filtered = polarities_gpu[valid_mask]
+                
+                # Move back to CPU
+                coords_cpu = coords_filtered.cpu().numpy()
+                alphas_cpu = alphas_filtered.cpu().numpy()
+                polarities_cpu = polarities_filtered.cpu().numpy()
             
-            # Convert back to CPU
-            coords_scaled = cp.asnumpy(coords_gpu)
+            # Update events with GPU-processed data
+            processed_events = []
+            for i in range(len(coords_cpu)):
+                event = {
+                    'canvas_x': coords_cpu[i, 0],
+                    'canvas_y': coords_cpu[i, 1], 
+                    'alpha': alphas_cpu[i],
+                    'polarity': polarities_cpu[i]
+                }
+                processed_events.append(event)
             
-            # Update events with scaled coordinates
-            for i, event in enumerate(events):
-                event['canvas_x'] = coords_scaled[i, 0]
-                event['canvas_y'] = coords_scaled[i, 1]
-            
-            return events
+            return processed_events
         except Exception as e:
-            print(f"GPU coordinate transformation failed: {e}")
+            print(f"GPU processing failed, falling back to CPU: {e}")
             return events
         
     def update_events(self, event_data):
-        """Update visualization with new events - matching C++ implementation"""
+        """Parallelized event processing with optional GPU acceleration"""
         current_time = time.time()
         
         # Get recent events (last 100ms for active dots - matching C++ DOT_FADE_DURATION)
         recent_events = event_data.get_recent_events(time_window=0.1)
         
-        # Update active dots with proper fade timing - optimized for performance
+        # Update active dots with proper fade timing - parallelized for performance
         self.active_dots = []
         if recent_events:  # Only process if we have events
-            # Limit to most recent events for performance
+            # Process ALL events (no culling as requested)
             max_events_to_process = min(len(recent_events), self.max_active_dots)
             recent_events = recent_events[-max_events_to_process:]
             
-            def process_event(event):
-                age = current_time - event['received_time']
-                if age <= DOT_FADE_DURATION:
-                    # Calculate alpha exactly like C++: alpha = dot.second / DOT_FADE_DURATION
-                    alpha = (DOT_FADE_DURATION - age) / DOT_FADE_DURATION
-                    alpha = max(0.0, min(1.0, alpha))  # Clamp to [0,1]
-                    self.active_dots.append({
-                        'x': event['x'],
-                        'y': event['y'], 
-                        'polarity': event['polarity'],
-                        'alpha': alpha
-                    })
-
-            # Parallel(n_jobs=-1)(delayed(process_event)(event) for event in recent_events)
-            
-            for event in recent_events:
-                age = current_time - event['received_time']
-                if age <= DOT_FADE_DURATION:
-                    # Calculate alpha exactly like C++: alpha = dot.second / DOT_FADE_DURATION
-                    alpha = (DOT_FADE_DURATION - age) / DOT_FADE_DURATION
-                    alpha = max(0.0, min(1.0, alpha))  # Clamp to [0,1]
+            if self.use_gpu and len(recent_events) > 1000:
+                # Use GPU acceleration for large event batches
+                temp_events = []
+                for event in recent_events:
+                    age = current_time - event['received_time']
+                    if age <= DOT_FADE_DURATION:
+                        alpha = (DOT_FADE_DURATION - age) / DOT_FADE_DURATION
+                        alpha = max(0.0, min(1.0, alpha))
+                        temp_events.append({
+                            'x': event['x'], 'y': event['y'], 
+                            'polarity': event['polarity'], 'alpha': alpha
+                        })
+                
+                # GPU batch processing
+                if temp_events:
+                    processed_events = self.screen_to_canvas_batch_gpu(temp_events)
+                    self.active_dots = processed_events
                     
-                    self.active_dots.append({
-                        'x': event['x'],
-                        'y': event['y'], 
-                        'polarity': event['polarity'],
-                        'alpha': alpha
-                    })
+            elif PARALLEL_AVAILABLE and len(recent_events) > 100:
+                # Use parallel processing for medium-large batches
+                def process_event_chunk(events_chunk):
+                    chunk_dots = []
+                    for event in events_chunk:
+                        age = current_time - event['received_time']
+                        if age <= DOT_FADE_DURATION:
+                            alpha = (DOT_FADE_DURATION - age) / DOT_FADE_DURATION
+                            alpha = max(0.0, min(1.0, alpha))
+                            chunk_dots.append({
+                                'x': event['x'], 'y': event['y'], 
+                                'polarity': event['polarity'], 'alpha': alpha
+                            })
+                    return chunk_dots
+                
+                # Split events into chunks for parallel processing
+                chunk_size = max(50, len(recent_events) // 4)
+                event_chunks = [recent_events[i:i+chunk_size] for i in range(0, len(recent_events), chunk_size)]
+                
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    chunk_results = list(executor.map(process_event_chunk, event_chunks))
+                
+                # Flatten results
+                for chunk_dots in chunk_results:
+                    self.active_dots.extend(chunk_dots)
+            else:
+                # Sequential processing for small batches
+                for event in recent_events:
+                    age = current_time - event['received_time']
+                    if age <= DOT_FADE_DURATION:
+                        alpha = (DOT_FADE_DURATION - age) / DOT_FADE_DURATION
+                        alpha = max(0.0, min(1.0, alpha))
+                        
+                        self.active_dots.append({
+                            'x': event['x'], 'y': event['y'], 
+                            'polarity': event['polarity'], 'alpha': alpha
+                        })
         
         # Update performance stats
         self.performance_stats['active_dots'] = len(self.active_dots)
@@ -363,20 +607,7 @@ class NeuromorphicVisualizer:
             imgui.get_color_u32_rgba(0.4, 0.4, 0.4, 1.0)
         )
 
-        # def draw_dot(dot):
-        #     canvas_x, canvas_y = self.screen_to_canvas(dot['x'], dot['y'])
-        #     screen_x = canvas_pos[0] + canvas_x
-        #     screen_y = canvas_pos[1] + canvas_y
-        #     draw_list.add_circle_filled(screen_x, screen_y, DOT_SIZE, color)
-
-        #     if dot['polarity'] > 0:
-        #         color = imgui.get_color_u32_rgba(0, int(255 * dot['alpha']), 0, 255)  # Green for positive
-        #     else:
-        #         color = imgui.get_color_u32_rgba(int(255 * dot['alpha']), 0, 0, 255)  # Red for negative
-
-        #     draw_list.add_circle_filled(screen_x, screen_y, DOT_SIZE, color)
-
-        # Parallel(n_jobs=-1)(delayed(draw_dot)(dot) for dot in self.active_dots)
+        # GPU-optimized rendering: use precomputed canvas coordinates if available
         
         # Draw active dots - matching C++ implementation exactly
         for dot in self.active_dots:
@@ -614,7 +845,7 @@ def main():
         return 1
     
     # Create UDP receiver
-    receiver = UDPEventReceiver(args.port)
+    receiver = UDPEventReceiver(args.port, buffer_size=1024 * 1024 * 20)
     if not receiver.start():
         return 1
     

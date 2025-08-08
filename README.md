@@ -290,7 +290,7 @@ neuromorphic_screens/
 - **Binary (.evt/.aedat)**: High-performance AEDAT binary format for large datasets
 - **CSV (.csv)**: Human-readable comma-separated format with headers
 - **Space-separated (.txt)**: rpg_dvs_ros compatible format for ROS integration
-- **UDP Network Protocol**: Binary event streaming with 32-byte DVSEvent structure
+- **UDP Network Protocol**: Binary event streaming with 16-byte DVSEvent structure
 
 ### Python ImGui Visualization Integration
 

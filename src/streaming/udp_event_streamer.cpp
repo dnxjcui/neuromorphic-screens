@@ -4,6 +4,7 @@
 #include <thread>
 #include <cstring>
 #include <random>
+#include <fstream>
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -280,8 +281,15 @@ void UdpEventStreamer::StreamingThreadFunction() {
                 static int sendCounter = 0;
                 if (++sendCounter % 50 == 0) {  // Print every 50th successful send
                     std::cout << "UDP: Sent packet with " << eventsInThisPacket << " events (" << actualPacketSize << " bytes)" << std::endl;
+                }            
+                if (++sendCounter == 100) {
+                    std::ofstream dump("udp_packet_100.bin", std::ios::binary);
+                    dump.write(packetBuffer.data(), actualPacketSize);
+                    dump.close();
                 }
+    
             } else {
+                std::cout << "UDP: Failed to send packet" << std::endl;
                 // Drop failed packet events for real-time performance
                 m_totalEventsDropped.fetch_add(eventsInThisPacket);
             }
@@ -289,9 +297,9 @@ void UdpEventStreamer::StreamingThreadFunction() {
             eventIndex += eventsInThisPacket;
         }
         
-        // Print performance statistics every 2 seconds
+        // Print performance statistics every 5 seconds (reduced frequency)
         auto statsElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStatsTime);
-        if (statsElapsed.count() >= 2000) {
+        if (statsElapsed.count() >= 5000) {
             uint64_t totalSent = m_totalEventsSent.load();
             uint64_t totalDropped = m_totalEventsDropped.load();
             float currentThroughput = m_currentThroughputMBps.load();

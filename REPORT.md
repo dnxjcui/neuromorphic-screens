@@ -378,7 +378,7 @@ struct Event {
 };
 ```
 - **Algorithm**: Each event represents a single pixel change at a specific time
-- **Memory Layout**: 13 bytes per event (8 + 2 + 2 + 1 bytes)
+- **Memory Layout**: 16 bytes per event (DVSEvent structure with padding for alignment)
 - **Design Rationale**: Minimal structure for efficient storage and processing
 
 **EventStream Structure**
@@ -1380,16 +1380,16 @@ The UDP streaming implementation establishes the neuromorphic screens project as
 **COORDINATE SCALING RESOLVED**: The Python UDP visualizer has been completely fixed to properly handle coordinate scaling and DVSEvent parsing, eliminating the border clustering issue that was preventing proper event visualization.
 
 #### Critical Fixes Applied
-- **DVSEvent Structure**: Fixed parsing to use correct 13-byte structure (`<QHHb`) matching C++ Event struct
+- **DVSEvent Structure**: Fixed parsing to use correct 16-byte structure matching C++ sizeof(DVSEvent)
 - **Coordinate Scaling**: Implemented proper screen-to-canvas scaling: `(x / screen_width) * canvas_width`  
 - **Event Processing**: Restored working v1 logic with minimal changes to preserve architectural stability
 - **Packet Reception**: Validated 2300+ events/sec throughput with proper coordinate ranges
 
 #### Fixed Python Code Structure
 ```python
-# FIXED: DVSEvent parsing (13 bytes, not 16)
+# FIXED: DVSEvent parsing (16 bytes as per sizeof(DVSEvent))
 def parse_events(self, data):
-    event_size = 13  # timestamp(8) + x(2) + y(2) + polarity(1) 
+    event_size = 16  # DVSEvent structure with alignment padding
     for i in range(0, len(event_data), event_size):
         timestamp, x, y, polarity = struct.unpack_from('<QHHb', event_data, i)
         if 0 <= x <= self.screen_width and 0 <= y <= self.screen_height:
