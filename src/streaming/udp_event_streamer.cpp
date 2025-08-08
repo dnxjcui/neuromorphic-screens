@@ -279,13 +279,15 @@ void UdpEventStreamer::StreamingThreadFunction() {
                 
                 // Debug output for successful sends
                 static int sendCounter = 0;
-                if (++sendCounter % 50 == 0) {  // Print every 50th successful send
+                sendCounter++;
+                if (sendCounter % 50 == 0) {  // Print every 50th successful send
                     std::cout << "UDP: Sent packet with " << eventsInThisPacket << " events (" << actualPacketSize << " bytes)" << std::endl;
                 }            
-                if (++sendCounter == 100) {
+                if (sendCounter == 100) {
                     std::ofstream dump("udp_packet_100.bin", std::ios::binary);
                     dump.write(packetBuffer.data(), actualPacketSize);
                     dump.close();
+                    std::cout << "UDP: Debug packet dumped to udp_packet_100.bin" << std::endl;
                 }
     
             } else {

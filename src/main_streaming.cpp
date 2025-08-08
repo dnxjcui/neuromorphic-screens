@@ -48,7 +48,7 @@ void printUsage(const std::string& programName) {
     std::cout << "\nUDP Streaming Options:\n";
     std::cout << "  --ip <address>        Target IP address (default: 127.0.0.1)\n";
     std::cout << "  --port <port>         Target UDP port (default: 9999)\n";
-    std::cout << "  --batch <size>        Events per UDP packet (default: 1500)\n";
+    std::cout << "  --batch <size>        Events per UDP packet (default: 10000)\n";
     std::cout << "  --throughput <mbps>   Target throughput in MB/s (default: 20.0)\n";
     std::cout << "  --maxdrop <ratio>     Max event drop ratio 0.0-1.0 (default: 0.1)\n";
     std::cout << "  --duration <seconds>  Run for specified duration (default: unlimited)\n";
@@ -203,7 +203,7 @@ public:
         if (targetIP.empty()) targetIP = "127.0.0.1";
         
         int targetPort = parser.getIntValue("--port", 9999);
-        int eventsPerBatch = parser.getIntValue("--batch", 1500);
+        int eventsPerBatch = parser.getIntValue("--batch", 10000);
         int durationSeconds = parser.getIntValue("--duration", 0);
         bool noVisualization = parser.hasFlag("--novis");
         bool showOverlay = parser.hasFlag("--overlay");
@@ -254,7 +254,7 @@ public:
             return 1;
         }
         
-        // Set up safe event source that uses thread-safe methods
+        // Set up safe event source that uses thread-safe methods with incremental processing
         std::atomic<bool> eventSourceActive(true);
         
         streamer.SetEventSource([&streamingApp, &eventSourceActive]() -> std::vector<DVSEvent> {
@@ -265,35 +265,67 @@ public:
                 return dvsEvents;
             }
             
+            // Static variables to track incremental processing
+            static uint64_t lastProcessedCount = 0;
+            static uint64_t debugCounter = 0;
+            
             try {
                 // Get a thread-safe copy of recent events
                 const EventStream& stream = streamingApp.getEventStream();
-                size_t streamSize = stream.size();
+                size_t currentStreamSize = stream.size();
+                uint64_t totalEventsGenerated = stream.total_events_generated;
                 
-                if (streamSize > 0) {
-                    uint64_t currentTime = HighResTimer::GetMicroseconds();
+                if (currentStreamSize > 0) {
+                    // Only process NEW events since last call
+                    uint64_t newEventsCount = totalEventsGenerated - lastProcessedCount;
                     
-                    // Get the recent events safely
-                    auto eventsCopy = stream.getEventsCopy();
-                    
-                    // Use current stride value from StreamingApp to control event density
-                    uint32_t currentStride = streamingApp.getStride();
-                    size_t eventsToProcess = (std::min)(eventsCopy.size(), static_cast<size_t>(10000)); // Base limit (??)
-                    // size_t eventsToProcess = eventsCopy.size();
-                    
-                    // Apply stride-based filtering to reduce event density when stride > 1
-                    // if (currentStride > 1) {
-                    //     eventsToProcess = eventsToProcess / currentStride;
-                    // }
-                    
-                    for (size_t i = 0; i < eventsToProcess && eventSourceActive.load(); ++i) {
-                        const auto& event = eventsCopy[i];
+                    if (newEventsCount > 0) {
+                        uint64_t currentTime = HighResTimer::GetMicroseconds();
                         
-                        // Use current time as timestamp and create DVSEvent from core Event
-                        Event timedEvent = event;
-                        timedEvent.timestamp = currentTime;
-                        DVSEvent dvsEvent(timedEvent);
-                        dvsEvents.push_back(dvsEvent);
+                        // Get the recent events safely
+                        auto eventsCopy = stream.getEventsCopy();
+                        
+                        // Use current stride value from StreamingApp to control event density
+                        uint32_t currentStride = streamingApp.getStride();
+                        
+                        // Debug: Print stride changes
+                        static uint32_t lastStride = 0;
+                        if (currentStride != lastStride) {
+                            std::cout << "UDP Event Source: Stride changed from " << lastStride << " to " << currentStride << std::endl;
+                            lastStride = currentStride;
+                        }
+                        
+                        // Calculate how many events from the end to process (only new ones)
+                        size_t startIndex = 0;
+                        if (eventsCopy.size() > newEventsCount) {
+                            startIndex = eventsCopy.size() - newEventsCount;
+                        }
+                        
+                        // Apply stride-based spatial filtering: higher stride = fewer events sent
+                        size_t strideStep = currentStride > 1 ? currentStride : 1;
+                        size_t eventsSelected = 0;
+                        
+                        for (size_t i = startIndex; i < eventsCopy.size() && eventSourceActive.load(); i += strideStep) {
+                            const auto& event = eventsCopy[i];
+                            
+                            // Use current time as timestamp and create DVSEvent from core Event
+                            Event timedEvent = event;
+                            timedEvent.timestamp = currentTime;
+                            DVSEvent dvsEvent(timedEvent);
+                            dvsEvents.push_back(dvsEvent);
+                            eventsSelected++;
+                        }
+                        
+                        // Update our tracking counter
+                        lastProcessedCount = totalEventsGenerated;
+                        
+                        // Debug output for incremental processing
+                        if (++debugCounter % 50 == 0 && newEventsCount > 0) {
+                            std::cout << "UDP Event Source: NEW events=" << newEventsCount 
+                                      << ", buffer_size=" << eventsCopy.size() 
+                                      << ", selected=" << eventsSelected 
+                                      << ", stride=" << currentStride << std::endl;
+                        }
                     }
                 }
             } catch (const std::exception& e) {
