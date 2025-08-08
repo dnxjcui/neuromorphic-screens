@@ -104,7 +104,7 @@ class UDPEventReceiver:
         self.event_data = EventData()
         self.thread = None
         self.last_buffer_clear = time.time()
-        self.buffer_clear_interval = 0.01  # Clear buffer every 10ms aggressively to prevent latency buildup
+        self.buffer_clear_interval = 5  # Clear buffer every 10ms aggressively to prevent latency buildup
         self.last_stats_time = time.time()
         self.stats_interval = 2.0  # Print stats every 2 seconds like C++
         self.packet_latencies = []  # Track packet processing latencies
