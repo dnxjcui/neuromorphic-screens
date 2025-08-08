@@ -285,35 +285,46 @@ public:
                         // Get the recent events safely
                         auto eventsCopy = stream.getEventsCopy();
                         
-                        // Use current stride value from StreamingApp to control event density
-                        uint32_t currentStride = streamingApp.getStride();
-                        
-                        // Debug: Print stride changes
-                        static uint32_t lastStride = 0;
-                        if (currentStride != lastStride) {
-                            std::cout << "UDP Event Source: Stride changed from " << lastStride << " to " << currentStride << std::endl;
-                            lastStride = currentStride;
-                        }
+                        // Note: Stride is controlled at capture level, not UDP transmission level
                         
                         // Calculate how many events from the end to process (only new ones)
-                        size_t startIndex = 0;
+                        int32_t startIndex = 0;
                         if (eventsCopy.size() > newEventsCount) {
                             startIndex = eventsCopy.size() - newEventsCount;
                         }
                         
-                        // Apply stride-based spatial filtering: higher stride = fewer events sent
-                        size_t strideStep = currentStride > 1 ? currentStride : 1;
-                        size_t eventsSelected = 0;
-                        
-                        for (size_t i = startIndex; i < eventsCopy.size() && eventSourceActive.load(); i += strideStep) {
-                            const auto& event = eventsCopy[i];
-                            
-                            // Use current time as timestamp and create DVSEvent from core Event
-                            Event timedEvent = event;
-                            timedEvent.timestamp = currentTime;
-                            DVSEvent dvsEvent(timedEvent);
-                            dvsEvents.push_back(dvsEvent);
-                            eventsSelected++;
+                        // Process ALL new events without spatial filtering
+                        int32_t eventsSelected = 0;
+
+                        // Thread-safe parallelization: accumulate per-thread, then merge once
+                        #pragma omp parallel
+                        {
+                            std::vector<DVSEvent> localBuffer;
+                            localBuffer.reserve(newEventsCount);
+                            int32_t localCount = 0;
+
+                            #pragma omp for schedule(static)
+                            for (int32_t i = startIndex; i < eventsCopy.size(); ++i) {
+                                if (!eventSourceActive.load()) {
+                                    continue;
+                                }
+                                const auto& event = eventsCopy[i];
+                                
+                                // Use current time as timestamp and create DVSEvent from core Event
+                                Event timedEvent = event;
+                                timedEvent.timestamp = currentTime;
+                                localBuffer.emplace_back(timedEvent);
+                                localCount++;
+                            }
+
+                            // Merge this thread's results once
+                            #pragma omp critical
+                            {
+                                if (!localBuffer.empty()) {
+                                    dvsEvents.insert(dvsEvents.end(), localBuffer.begin(), localBuffer.end());
+                                    eventsSelected += localCount;
+                                }
+                            }
                         }
                         
                         // Update our tracking counter
@@ -323,8 +334,7 @@ public:
                         if (++debugCounter % 50 == 0 && newEventsCount > 0) {
                             std::cout << "UDP Event Source: NEW events=" << newEventsCount 
                                       << ", buffer_size=" << eventsCopy.size() 
-                                      << ", selected=" << eventsSelected 
-                                      << ", stride=" << currentStride << std::endl;
+                                      << ", transmitted=" << eventsSelected << std::endl;
                         }
                     }
                 }
