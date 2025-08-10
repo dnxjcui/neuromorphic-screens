@@ -1,5 +1,4 @@
 #include "event_file_formats.h"
-#include "event_file.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -7,6 +6,29 @@
 #include <ctime>
 
 namespace neuromorphic {
+
+// EventStats implementation moved from event_file.cpp
+void EventStats::calculate(const EventStream& stream) {
+    total_events = static_cast<uint32_t>(stream.events.size());
+    positive_events = 0;
+    negative_events = 0;
+    
+    for (const auto& event : stream.events) {
+        if (event.polarity > 0) {
+            positive_events++;
+        } else if (event.polarity < 0) {
+            negative_events++;
+        }
+    }
+    
+    if (total_events > 0) {
+        duration_us = stream.events.back().timestamp - stream.events.front().timestamp;
+        events_per_second = static_cast<float>(total_events) * 1000000.0f / static_cast<float>(duration_us);
+    } else {
+        duration_us = 0;
+        events_per_second = 0.0f;
+    }
+}
 
 EventFileFormat EventFileFormats::DetectFormat(const std::string& filename) {
     // Check extension first

@@ -538,4 +538,14 @@ LRESULT WINAPI ImGuiStreamingViewer::WndProc(HWND hWnd, UINT msg, WPARAM wParam,
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
+// Virtual method implementations for base class
+void ImGuiStreamingViewer::RenderMainContent() {
+    RenderEventCanvas();
+}
+
+void ImGuiStreamingViewer::UpdateLogic() {
+    // Update event visualization for real-time streaming
+    // This gets called each frame to update the display
+}
+
 } // namespace neuromorphic
