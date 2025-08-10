@@ -7,77 +7,21 @@
 #include <chrono>
 #include <ctime>
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 namespace neuromorphic {
 
 ImGuiEventViewer::ImGuiEventViewer()
-    : m_hwnd(nullptr), m_d3dDevice(nullptr), m_d3dDeviceContext(nullptr),
-      m_swapChain(nullptr), m_mainRenderTargetView(nullptr),
-      m_currentEventIndex(0), m_replayStartTime(0),
+    : ImGuiViewerBase(), m_currentEventIndex(0), m_replayStartTime(0),
       m_isReplaying(false), m_isPaused(false), m_replaySpeed(0.5f),
       m_downsampleFactor(1), m_eventsProcessed(0),
       m_canvasWidth(800), m_canvasHeight(600),
       m_threadRunning(false), m_showStats(true), m_showControls(true),
       m_seekPosition(0.0f), m_useDimming(true), m_dimmingRate(1.0f), m_isLooping(false) {
-    ZeroMemory(&m_wc, sizeof(m_wc));
 }
 
 ImGuiEventViewer::~ImGuiEventViewer() {
-    Cleanup();
+    StopReplay();
 }
 
-bool ImGuiEventViewer::Initialize(const char* title, int width, int height) {
-    // Create application window
-    m_wc.cbSize = sizeof(WNDCLASSEXW);
-    m_wc.style = CS_CLASSDC;
-    m_wc.lpfnWndProc = WndProc;
-    m_wc.cbClsExtra = 0L;
-    m_wc.cbWndExtra = 0L;
-    m_wc.hInstance = GetModuleHandle(nullptr);
-    m_wc.hIcon = nullptr;
-    m_wc.hCursor = nullptr;
-    m_wc.hbrBackground = nullptr;
-    m_wc.lpszMenuName = nullptr;
-    m_wc.lpszClassName = L"ImGuiEventViewer";
-    m_wc.hIconSm = nullptr;
-    
-    ::RegisterClassExW(&m_wc);
-    m_hwnd = ::CreateWindowW(m_wc.lpszClassName, L"Neuromorphic Event Viewer", 
-                            WS_OVERLAPPEDWINDOW, 100, 100, width, height, 
-                            nullptr, nullptr, m_wc.hInstance, nullptr);
-
-    // Store this pointer in window user data for WndProc access
-    ::SetWindowLongPtr(m_hwnd, GWLP_USERDATA, (LONG_PTR)this);
-
-    // Initialize Direct3D
-    if (!CreateDeviceD3D(m_hwnd)) {
-        CleanupDeviceD3D();
-        ::UnregisterClassW(m_wc.lpszClassName, m_wc.hInstance);
-        return false;
-    }
-
-    // Show the window
-    ::ShowWindow(m_hwnd, SW_SHOWDEFAULT);
-    ::UpdateWindow(m_hwnd);
-
-    // Setup Dear ImGui context
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-
-    // Setup Platform/Renderer backends
-    ImGui_ImplWin32_Init(m_hwnd);
-    ImGui_ImplDX11_Init(m_d3dDevice, m_d3dDeviceContext);
-
-    std::cout << "ImGui Event Viewer initialized successfully" << std::endl;
-    return true;
-}
 
 bool ImGuiEventViewer::LoadEvents(const std::string& filename) {
     std::cout << "Loading events from: " << filename << std::endl;
@@ -117,70 +61,6 @@ bool ImGuiEventViewer::LoadEvents(const std::string& filename) {
     return true;
 }
 
-bool ImGuiEventViewer::Render() {
-    // Poll and handle messages
-    MSG msg;
-    while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
-        ::TranslateMessage(&msg);
-        ::DispatchMessage(&msg);
-        if (msg.message == WM_QUIT)
-            return false;
-    }
-
-    // Handle window resize
-    if (m_swapChain) {
-        // Start the Dear ImGui frame
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-
-        // Get main viewport for full-screen rendering
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->Pos);
-        ImGui::SetNextWindowSize(viewport->Size);
-        
-        ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar;
-        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        
-        bool p_open = true;
-        ImGui::Begin("MainWindow", &p_open, window_flags);
-        ImGui::PopStyleVar(3);
-
-        // Render main content
-        RenderEventCanvas();
-        
-        // Render control panels
-        if (m_showControls) {
-            RenderControlPanel();
-        }
-        
-        if (m_showStats) {
-            RenderStatsPanel();
-        }
-
-        ImGui::End();
-
-        // Rendering
-        ImGui::Render();
-        const float clear_color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-        m_d3dDeviceContext->OMSetRenderTargets(1, &m_mainRenderTargetView, nullptr);
-        m_d3dDeviceContext->ClearRenderTargetView(m_mainRenderTargetView, clear_color);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
-        // Present
-        HRESULT hr = m_swapChain->Present(1, 0); // Present with vsync
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
-            return false;
-        }
-    }
-
-    return true;
-}
 
 void ImGuiEventViewer::StartReplay() {
     std::cout << "Starting replay with " << m_events.events.size() << " events" << std::endl;
@@ -421,14 +301,22 @@ void ImGuiEventViewer::RemoveExpiredDots() {
     );
 }
 
-void ImGuiEventViewer::RenderEventCanvas() {
+void ImGuiEventViewer::UpdateLogic() {
+    // Update active dots
+    UpdateActiveDots();
+}
+
+void ImGuiEventViewer::RenderMainContent() {
     // Calculate canvas area (most of the window)
     ImVec2 windowSize = ImGui::GetWindowSize();
     m_canvasWidth = static_cast<uint32_t>(windowSize.x * 0.75f); // 75% of window width
     m_canvasHeight = static_cast<uint32_t>(windowSize.y - 100); // Leave space for controls
     
+    float canvasWidth = static_cast<float>(m_canvasWidth);
+    float canvasHeight = static_cast<float>(m_canvasHeight);
+    
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize(static_cast<float>(m_canvasWidth), static_cast<float>(m_canvasHeight));
+    ImVec2 canvasSize(canvasWidth, canvasHeight);
     
     // Draw black background
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -439,33 +327,23 @@ void ImGuiEventViewer::RenderEventCanvas() {
     drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), 
                      IM_COL32(100, 100, 100, 255));
     
-    // Draw active dots
+    // Convert active dots to events for rendering
+    std::vector<Event> currentEvents;
     {
         std::lock_guard<std::mutex> lock(m_activeDotsLock);
         for (const auto& dot : m_activeDots) {
-            const Event& event = dot.first;
             float alpha = dot.second / constants::DOT_FADE_DURATION;
-            
-            ImVec2 dotPos = ScreenToCanvas(event.x, event.y);
-            dotPos.x += canvasPos.x;
-            dotPos.y += canvasPos.y;
-            
-            // Ensure dot is within canvas bounds
-            if (dotPos.x >= canvasPos.x && dotPos.x <= canvasPos.x + canvasSize.x &&
-                dotPos.y >= canvasPos.y && dotPos.y <= canvasPos.y + canvasSize.y) {
-                
-                ImU32 color;
-                if (event.polarity > 0) {
-                    // Green for positive events
-                    color = IM_COL32(0, static_cast<int>(255 * alpha), 0, 255);
-                } else {
-                    // Red for negative events
-                    color = IM_COL32(static_cast<int>(255 * alpha), 0, 0, 255);
-                }
-                
-                drawList->AddCircleFilled(dotPos, constants::DOT_SIZE, color);
+            if (alpha > 0.0f) {
+                currentEvents.push_back(dot.first);
             }
         }
+    }
+    
+    // Use base class rendering with custom fade
+    if (!currentEvents.empty() && m_events.width > 0 && m_events.height > 0) {
+        uint64_t currentTime = HighResTimer::GetMicroseconds();
+        RenderEventDotsWithFade(currentEvents, canvasWidth, canvasHeight, 
+                               m_events.width, m_events.height, currentTime, 100.0f);
     }
     
     // Reserve space for canvas
@@ -477,6 +355,11 @@ void ImGuiEventViewer::RenderControlPanel() {
     ImGui::SetNextWindowSize(ImVec2(300, 280));
     
     if (ImGui::Begin("Controls", &m_showControls, ImGuiWindowFlags_NoResize)) {
+        // Render statistics first
+        RenderStatistics(m_stats.total_events, m_stats.events_per_second, 
+                        static_cast<uint32_t>(m_activeDots.size()));
+        
+        ImGui::Separator();
         // Playback controls
         if (ImGui::Button("Play", ImVec2(60, 30))) {
             StartReplay();
@@ -541,8 +424,20 @@ void ImGuiEventViewer::RenderControlPanel() {
             ExportToGIF();
         }
         ImGui::TextWrapped("Exports 10-second GIF of current visualization. Enable Loop for continuous recording.");
+        
+        ImGui::Separator();
+        
+        // Show additional stats panel toggle
+        if (ImGui::Button("Toggle Stats Panel")) {
+            m_showStats = !m_showStats;
+        }
     }
     ImGui::End();
+    
+    // Render separate stats panel if enabled
+    if (m_showStats) {
+        RenderStatsPanel();
+    }
 }
 
 void ImGuiEventViewer::RenderStatsPanel() {
@@ -578,111 +473,6 @@ void ImGuiEventViewer::RenderStatsPanel() {
 }
 
 
-ImVec2 ImGuiEventViewer::ScreenToCanvas(uint16_t screenX, uint16_t screenY) const {
-    if (m_events.width > 0 && m_events.height > 0) {
-        float scaleX = static_cast<float>(m_canvasWidth) / static_cast<float>(m_events.width);
-        float scaleY = static_cast<float>(m_canvasHeight) / static_cast<float>(m_events.height);
-        
-        return ImVec2(screenX * scaleX, screenY * scaleY);
-    } else {
-        return ImVec2(static_cast<float>(screenX), static_cast<float>(screenY));
-    }
-}
 
-bool ImGuiEventViewer::CreateDeviceD3D(HWND hWnd) {
-    // Setup swap chain
-    DXGI_SWAP_CHAIN_DESC sd;
-    ZeroMemory(&sd, sizeof(sd));
-    sd.BufferCount = 2;
-    sd.BufferDesc.Width = 0;
-    sd.BufferDesc.Height = 0;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferDesc.RefreshRate.Numerator = 60;
-    sd.BufferDesc.RefreshRate.Denominator = 1;
-    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = hWnd;
-    sd.SampleDesc.Count = 1;
-    sd.SampleDesc.Quality = 0;
-    sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-    UINT createDeviceFlags = 0;
-    D3D_FEATURE_LEVEL featureLevel;
-    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
-    HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, 
-                                               featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_swapChain, 
-                                               &m_d3dDevice, &featureLevel, &m_d3dDeviceContext);
-    if (res == DXGI_ERROR_UNSUPPORTED) // Try high-performance WARP software driver if hardware is not available.
-        res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, 
-                                           featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_swapChain, 
-                                           &m_d3dDevice, &featureLevel, &m_d3dDeviceContext);
-    if (res != S_OK)
-        return false;
-
-    CreateRenderTarget();
-    return true;
-}
-
-void ImGuiEventViewer::CleanupDeviceD3D() {
-    CleanupRenderTarget();
-    if (m_swapChain) { m_swapChain->Release(); m_swapChain = nullptr; }
-    if (m_d3dDeviceContext) { m_d3dDeviceContext->Release(); m_d3dDeviceContext = nullptr; }
-    if (m_d3dDevice) { m_d3dDevice->Release(); m_d3dDevice = nullptr; }
-}
-
-void ImGuiEventViewer::CreateRenderTarget() {
-    ID3D11Texture2D* pBackBuffer;
-    m_swapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-    m_d3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &m_mainRenderTargetView);
-    pBackBuffer->Release();
-}
-
-void ImGuiEventViewer::CleanupRenderTarget() {
-    if (m_mainRenderTargetView) { m_mainRenderTargetView->Release(); m_mainRenderTargetView = nullptr; }
-}
-
-void ImGuiEventViewer::Cleanup() {
-    // Stop replay thread
-    StopReplay();
-    
-    // Cleanup ImGui
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-
-    CleanupDeviceD3D();
-    
-    if (m_hwnd) {
-        ::DestroyWindow(m_hwnd);
-        ::UnregisterClassW(m_wc.lpszClassName, m_wc.hInstance);
-    }
-}
-
-// Win32 message handler
-LRESULT WINAPI ImGuiEventViewer::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-        return true;
-
-    ImGuiEventViewer* viewer = reinterpret_cast<ImGuiEventViewer*>(::GetWindowLongPtr(hWnd, GWLP_USERDATA));
-    
-    switch (msg) {
-    case WM_SIZE:
-        if (viewer && viewer->m_d3dDevice != nullptr && wParam != SIZE_MINIMIZED) {
-            viewer->CleanupRenderTarget();
-            viewer->m_swapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
-            viewer->CreateRenderTarget();
-        }
-        return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-            return 0;
-        break;
-    case WM_DESTROY:
-        ::PostQuitMessage(0);
-        return 0;
-    }
-    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
-}
 
 } // namespace neuromorphic

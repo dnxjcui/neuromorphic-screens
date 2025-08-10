@@ -27,7 +27,6 @@ endif()
 # Base source files (common to all applications)
 set(BASE_SOURCES
     src/core/timing.cpp
-    src/core/event_file.cpp
     src/core/event_file_formats.cpp
     src/core/streaming_app.cpp
     src/capture/screen_capture.cpp
@@ -39,15 +38,6 @@ set(CLI_SOURCES
     ${BASE_SOURCES}
 )
 
-# Source files for Streaming application (consolidated)
-set(STREAMING_SOURCES
-    src/main_streaming.cpp
-    src/visualization/imgui_streaming_viewer.cpp
-    src/visualization/direct_overlay_viewer.cpp
-    src/streaming/udp_event_streamer.cpp
-    ${BASE_SOURCES}
-)
-
 # Create CLI executable (with optional ImGui support)
 add_executable(neuromorphic_screens ${CLI_SOURCES})
 
@@ -56,6 +46,10 @@ target_link_libraries(neuromorphic_screens
     d3d11
     dxgi
     d3dcompiler
+    d2d1
+    dwrite
+    dwmapi
+    ws2_32
     OpenMP::OpenMP_CXX
 )
 
@@ -89,11 +83,14 @@ if(WIN32)
         # Add ImGui support to CLI executable for --gui flag
         target_sources(neuromorphic_screens PRIVATE 
             ${IMGUI_SOURCES}
+            src/visualization/imgui_viewer_base.cpp
             src/visualization/imgui_event_viewer.cpp
+            src/visualization/imgui_streaming_viewer.cpp
+            src/visualization/direct_overlay_viewer.cpp
+            src/streaming/udp_event_streamer.cpp
         )
         
-        # Create consolidated Streaming application executable
-        add_executable(neuromorphic_screens_streaming ${STREAMING_SOURCES} ${IMGUI_SOURCES})
+        # Note: Streaming functionality has been consolidated into main neuromorphic_screens executable
         
         # Include ImGui directories for both executables
         target_include_directories(neuromorphic_screens PRIVATE 
@@ -101,23 +98,6 @@ if(WIN32)
             "${IMGUI_DIR}/backends"
         )
         
-        target_include_directories(neuromorphic_screens_streaming PRIVATE 
-            "${IMGUI_DIR}"
-            "${IMGUI_DIR}/backends"
-        )
-        
-        # Link ImGui libraries for streaming application
-        target_link_libraries(neuromorphic_screens_streaming
-            d3d11
-            dxgi
-            d3dcompiler
-            d2d1
-            dwrite
-            dwmapi
-            ws2_32
-            OpenMP::OpenMP_CXX
-            user32 gdi32 shell32 ole32 uuid comctl32 advapi32
-        )
         
         message(STATUS "ImGui GUI support configured successfully")
         message(STATUS "ImGui path: ${IMGUI_DIR}")
@@ -145,12 +125,11 @@ endif()
 
 # Summary of what will be built
 message(STATUS "========== Build Summary ==========")
-message(STATUS "CLI Application: neuromorphic_screens (includes --gui support)")
+message(STATUS "Unified Application: neuromorphic_screens")
+message(STATUS "  - --mode capture: Capture and save events")
+message(STATUS "  - --mode replay: Load and visualize events (with --gui)")
+message(STATUS "  - --mode stream: Real-time streaming with GUI")
+message(STATUS "  - --mode overlay: Direct screen overlay streaming")
+message(STATUS "  - --mode udp: UDP event streaming with visualization")
 message(STATUS "Benchmark Application: benchmark_parallelization")
-if(WIN32 AND EXISTS "${IMGUI_DIR}/imgui.cpp")
-    message(STATUS "Streaming Application: neuromorphic_screens_streaming (consolidated)")
-    message(STATUS "  - Default mode: Real-time streaming with GUI")
-    message(STATUS "  - --overlay: Direct screen overlay")
-    message(STATUS "  - --UDP: UDP event streaming with visualization options")
-endif()
 message(STATUS "======================================")

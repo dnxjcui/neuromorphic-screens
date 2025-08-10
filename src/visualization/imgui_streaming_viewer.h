@@ -1,5 +1,6 @@
 #pragma once
 
+#include "imgui_viewer_base.h"
 #include "../core/event_types.h"
 #include "../core/timing.h"
 #include "../core/temporal_index.h"
@@ -10,27 +11,13 @@
 #include <thread>
 #include <string>
 
-// Windows and DirectX includes
-#ifdef _WIN32
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
-    #include <d3d11.h>
-    #include <d3dcompiler.h>
-    #include <dxgi.h>
-#endif
-
-// ImGui includes
-#include <imgui.h>
-#include <imgui_impl_win32.h>
-#include <imgui_impl_dx11.h>
-
 namespace neuromorphic {
 
 /**
  * ImGui-based streaming event viewer for real-time visualization
  * Simplified interface without playback controls - designed for live streaming
  */
-class ImGuiStreamingViewer {
+class ImGuiStreamingViewer : public ImGuiViewerBase {
 public:
     ImGuiStreamingViewer(const std::string& title, StreamingApp& streamingApp);
     ~ImGuiStreamingViewer();
@@ -49,6 +36,12 @@ public:
      * Cleanup resources
      */
     void Cleanup();
+
+protected:
+    // Override base class virtual methods
+    void RenderMainContent() override;
+    void RenderControlPanel() override;
+    void UpdateLogic() override;
     
     /**
      * Export functionality
@@ -118,7 +111,6 @@ private:
      * UI rendering
      */
     void RenderEventCanvas();
-    void RenderControlPanel();
     void RenderStatsPanel();
     
     /**
