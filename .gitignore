@@ -85,3 +85,4 @@ palette.png
 *.ini
 nul
 env/**
+*.bin
